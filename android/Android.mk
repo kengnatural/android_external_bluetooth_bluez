@@ -154,7 +154,7 @@ LOCAL_SHARED_LIBRARIES := \
 LOCAL_CFLAGS := $(BLUEZ_COMMON_CFLAGS)
 
 LOCAL_MODULE := bluetooth.default
-LOCAL_MODULE_RELATIVE_PATH := hw
+LOCAL_MODULE_PATH := $(TARGET_OUT_SHARED_LIBRARIES)/hw
 LOCAL_MODULE_TAGS := optional
 LOCAL_MODULE_CLASS := SHARED_LIBRARIES
 LOCAL_REQUIRED_MODULES := bluetoothd bluetoothd-snoop init.bluetooth.rc
@@ -539,6 +539,36 @@ LOCAL_ADDITIONAL_DEPENDENCIES := $(LOCAL_PATH)/bluez/configure.ac
 include $(BUILD_EXECUTABLE)
 
 #
+# hciconfig
+#
+
+include $(CLEAR_VARS)
+
+LOCAL_SRC_FILES:= \
+	bluez/tools/hciconfig.c \
+	bluez/tools/csr.c \
+	bluez/tools/csr_h4.c \
+	bluez/tools/csr_bcsp.c \
+	bluez/lib/bluetooth.c \
+	bluez/lib/hci.c \
+
+LOCAL_C_INCLUDES := \
+	$(LOCAL_PATH)/bluez \
+
+LOCAL_CFLAGS := $(BLUEZ_COMMON_CFLAGS)
+
+LOCAL_STATIC_LIBRARIES := \
+	bluetooth-headers \
+
+LOCAL_MODULE_PATH := $(TARGET_OUT_OPTIONAL_EXECUTABLES)
+LOCAL_MODULE_TAGS := debug
+LOCAL_MODULE := hciconfig
+
+LOCAL_ADDITIONAL_DEPENDENCIES := $(LOCAL_PATH)/bluez/configure.ac
+
+include $(BUILD_EXECUTABLE)
+
+#
 # l2ping
 #
 
@@ -693,7 +723,7 @@ LOCAL_MODULE_CLASS := STATIC_LIBRARIES
 include_path := $(local-intermediates-dir)/include
 include_files := $(wildcard $(LOCAL_PATH)/bluez/lib/*.h)
 $(shell mkdir -p $(include_path)/bluetooth)
-$(foreach file,$(include_files),$(shell cp -u $(file) $(include_path)/bluetooth))
+$(foreach file,$(include_files),$(shell rsync -u $(file) $(include_path)/bluetooth))
 
 LOCAL_EXPORT_C_INCLUDE_DIRS := $(include_path)
 
