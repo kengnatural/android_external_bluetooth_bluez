@@ -313,6 +313,7 @@ LOCAL_SRC_FILES := \
 	bluez/src/shared/btsnoop.c \
 	bluez/lib/hci.c \
 	bluez/lib/bluetooth.c \
+	bluez/android/log.c \
 
 LOCAL_C_INCLUDES := \
 	$(LOCAL_PATH)/bluez \
@@ -378,7 +379,7 @@ LOCAL_SHARED_LIBRARIES := \
 LOCAL_CFLAGS := $(BLUEZ_COMMON_CFLAGS) -Wno-declaration-after-statement
 LOCAL_LDFLAGS := -ldl
 
-LOCAL_MODULE_RELATIVE_PATH := hw
+LOCAL_MODULE_PATH := $(TARGET_OUT_SHARED_LIBRARIES)/hw
 LOCAL_MODULE_TAGS := optional
 LOCAL_MODULE := audio.a2dp.default
 
@@ -404,7 +405,7 @@ LOCAL_SHARED_LIBRARIES := \
 
 LOCAL_CFLAGS := $(BLUEZ_COMMON_CFLAGS) -Wno-declaration-after-statement
 
-LOCAL_MODULE_RELATIVE_PATH := hw
+LOCAL_MODULE_PATH := $(TARGET_OUT_SHARED_LIBRARIES)/hw
 LOCAL_MODULE_TAGS := optional
 LOCAL_MODULE := audio.sco.default
 
