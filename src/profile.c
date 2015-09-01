@@ -32,14 +32,15 @@
 
 #include <glib.h>
 #include <dbus/dbus.h>
-#include <gdbus/gdbus.h>
 
-#include <bluetooth/bluetooth.h>
-#include <bluetooth/sdp.h>
-#include <bluetooth/sdp_lib.h>
+#include "lib/bluetooth.h"
+#include "lib/sdp.h"
+#include "lib/sdp_lib.h"
+#include "lib/uuid.h"
+
+#include "gdbus/gdbus.h"
 
 #include "btio/btio.h"
-#include "lib/uuid.h"
 #include "sdpd.h"
 #include "log.h"
 #include "error.h"
@@ -796,8 +797,13 @@ static gboolean ext_io_disconnected(GIOChannel *io, GIOCondition cond,
 
 	DBG("%s disconnected from %s", ext->name, addr);
 drop:
-	if (conn->service)
-		btd_service_disconnecting_complete(conn->service, 0);
+	if (conn->service) {
+		if (btd_service_get_state(conn->service) ==
+						BTD_SERVICE_STATE_CONNECTING)
+			btd_service_connecting_complete(conn->service, -EIO);
+		else
+			btd_service_disconnecting_complete(conn->service, 0);
+	}
 
 	ext->conns = g_slist_remove(ext->conns, conn);
 	ext_io_destroy(conn);
@@ -1035,8 +1041,10 @@ static void ext_connect(GIOChannel *io, GError *err, gpointer user_data)
 									conn);
 	}
 
-	if (send_new_connection(ext, conn))
-		return;
+	if (conn->service && service_accept(conn->service) == 0) {
+		if (send_new_connection(ext, conn))
+			return;
+	}
 
 drop:
 	if (conn->service)

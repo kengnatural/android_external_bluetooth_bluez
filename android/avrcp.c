@@ -49,11 +49,6 @@
 
 #define L2CAP_PSM_AVCTP 0x17
 
-#define AVRCP_FEATURE_CATEGORY_1	0x0001
-#define AVRCP_FEATURE_CATEGORY_2	0x0002
-#define AVRCP_FEATURE_CATEGORY_3	0x0004
-#define AVRCP_FEATURE_CATEGORY_4	0x0008
-
 static bdaddr_t adapter_addr;
 static uint32_t record_tg_id = 0;
 static uint32_t record_ct_id = 0;
@@ -753,11 +748,12 @@ static const struct avrcp_control_ind control_ind = {
 
 static bool handle_register_notification_rsp(struct avrcp *session, int err,
 						uint8_t code, uint8_t event,
-						uint8_t *params,
+						void *params,
 						void *user_data)
 {
 	struct avrcp_device *dev = user_data;
 	struct hal_ev_avrcp_volume_changed ev;
+	uint8_t *volume = params;
 
 	if (err < 0) {
 		error("AVRCP: %s", strerror(-err));
@@ -771,7 +767,7 @@ static bool handle_register_notification_rsp(struct avrcp *session, int err,
 		return false;
 
 	ev.type = code;
-	ev.volume = params[0] & 0x7f;
+	ev.volume = volume[0];
 
 	ipc_send_notif(hal_ipc, HAL_SERVICE_ID_AVRCP,
 					HAL_EV_AVRCP_VOLUME_CHANGED,

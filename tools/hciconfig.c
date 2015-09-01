@@ -39,9 +39,9 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 
-#include <bluetooth/bluetooth.h>
-#include <bluetooth/hci.h>
-#include <bluetooth/hci_lib.h>
+#include "lib/bluetooth.h"
+#include "lib/hci.h"
+#include "lib/hci_lib.h"
 
 #include "src/textfile.h"
 #include "src/shared/util.h"
@@ -69,6 +69,7 @@ static void print_dev_list(int ctl, int flags)
 
 	if (ioctl(ctl, HCIGETDEVLIST, (void *) dl) < 0) {
 		perror("Can't get device list");
+		free(dl);
 		exit(1);
 	}
 
@@ -78,6 +79,8 @@ static void print_dev_list(int ctl, int flags)
 			continue;
 		print_dev_info(ctl, &di);
 	}
+
+	free(dl);
 }
 
 static void print_pkt_type(struct hci_dev_info *di)

@@ -268,7 +268,7 @@ static gboolean cmd_connect_cb(GIOChannel *io, GIOCondition cond,
 	DBG("");
 
 	if (cond & (G_IO_NVAL | G_IO_ERR | G_IO_HUP)) {
-		error("IPC: command socket connect failed with %d",cond);
+		error("IPC: command socket connect failed");
 		ipc_disconnect(ipc, false);
 
 		return FALSE;

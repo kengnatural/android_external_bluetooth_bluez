@@ -37,9 +37,9 @@
 #include <time.h>
 #include <sys/time.h>
 
-#include <bluetooth/bluetooth.h>
-#include <bluetooth/hci.h>
-#include <bluetooth/hci_lib.h>
+#include "lib/bluetooth.h"
+#include "lib/hci.h"
+#include "lib/hci_lib.h"
 
 #include "src/shared/util.h"
 #include "src/shared/btsnoop.h"
@@ -1229,7 +1229,7 @@ static void print_link_policy(uint16_t link_policy)
 	if (policy & 0x0004)
 		print_field("  Enable Sniff Mode");
 	if (policy & 0x0008)
-		print_field("  Enabled Park State");
+		print_field("  Enable Park State");
 }
 
 static void print_air_mode(uint8_t mode)
@@ -2402,7 +2402,17 @@ static void print_manufacturer(uint16_t manufacturer)
 static const struct {
 	uint16_t ver;
 	const char *str;
-} broadcom_subversion_table[] = {
+} broadcom_uart_subversion_table[] = {
+	{ 0x210b, "BCM43142A0"	},	/* 001.001.011 */
+	{ 0x410e, "BCM43341B0"	},	/* 002.001.014 */
+	{ 0x4406, "BCM4324B3"	},	/* 002.004.006 */
+	{ }
+};
+
+static const struct {
+	uint16_t ver;
+	const char *str;
+} broadcom_usb_subversion_table[] = {
 	{ 0x210b, "BCM43142A0"	},	/* 001.001.011 */
 	{ 0x2112, "BCM4314A0"	},	/* 001.001.018 */
 	{ 0x2118, "BCM20702A0"	},	/* 001.001.024 */
@@ -2416,44 +2426,45 @@ static const struct {
 	{ }
 };
 
-static void print_manufacturer_subversion(uint16_t manufacturer,
-							uint16_t subversion)
+static void print_manufacturer_broadcom(uint16_t subversion, uint16_t revision)
 {
 	uint16_t ver = le16_to_cpu(subversion);
+	uint16_t rev = le16_to_cpu(revision);
 	const char *str = NULL;
 	int i;
 
-	switch (le16_to_cpu(manufacturer)) {
-	case 15:
-		for (i = 0; broadcom_subversion_table[i].str; i++) {
-			if (broadcom_subversion_table[i].ver == ver) {
-				str = broadcom_subversion_table[i].str;
+	switch ((rev & 0xf000) >> 12) {
+	case 0:
+	case 3:
+		for (i = 0; broadcom_uart_subversion_table[i].str; i++) {
+			if (broadcom_uart_subversion_table[i].ver == ver) {
+				str = broadcom_uart_subversion_table[i].str;
 				break;
 			}
 		}
-
-		if (str)
-			print_field("  Firmware: %3.3u.%3.3u.%3.3u (%s)",
-					(ver & 0x7000) >> 13,
-					(ver & 0x1f00) >> 8, ver & 0x00ff, str);
-		else
-			print_field("  Firmware: %3.3u.%3.3u.%3.3u",
-					(ver & 0x7000) >> 13,
-					(ver & 0x1f00) >> 8, ver & 0x00ff);
+		break;
+	case 1:
+	case 2:
+		for (i = 0; broadcom_usb_subversion_table[i].str; i++) {
+			if (broadcom_usb_subversion_table[i].ver == ver) {
+				str = broadcom_usb_subversion_table[i].str;
+				break;
+			}
+		}
 		break;
 	}
-}
 
-static void print_manufacturer_revision(uint16_t manufacturer,
-							uint16_t revision)
-{
-	uint16_t rev = le16_to_cpu(revision);
+	if (str)
+		print_field("  Firmware: %3.3u.%3.3u.%3.3u (%s)",
+				(ver & 0x7000) >> 13,
+				(ver & 0x1f00) >> 8, ver & 0x00ff, str);
+	else
+		print_field("  Firmware: %3.3u.%3.3u.%3.3u",
+				(ver & 0x7000) >> 13,
+				(ver & 0x1f00) >> 8, ver & 0x00ff);
 
-	switch (le16_to_cpu(manufacturer)) {
-	case 15:
+	if (rev != 0xffff)
 		print_field("  Build: %4.4u", rev & 0x0fff);
-		break;
-	}
 }
 
 static const char *get_supported_command(int bit);
@@ -3547,6 +3558,53 @@ void packet_print_addr(const char *label, const void *data, bool random)
 void packet_print_ad(const void *data, uint8_t size)
 {
 	print_eir(data, size, true);
+}
+
+struct broadcast_message {
+	uint32_t frame_sync_instant;
+	uint16_t bluetooth_clock_phase;
+	uint16_t left_open_offset;
+	uint16_t left_close_offset;
+	uint16_t right_open_offset;
+	uint16_t right_close_offset;
+	uint16_t frame_sync_period;
+	uint8_t  frame_sync_period_fraction;
+} __attribute__ ((packed));
+
+static void print_3d_broadcast(const void *data, uint8_t size)
+{
+	const struct broadcast_message *msg = data;
+	uint32_t instant;
+	uint16_t left_open, left_close, right_open, right_close;
+	uint16_t phase, period;
+	uint8_t period_frac;
+	bool mode;
+
+	instant = le32_to_cpu(msg->frame_sync_instant);
+	mode = !!(instant & 0x40000000);
+	phase = le16_to_cpu(msg->bluetooth_clock_phase);
+	left_open = le16_to_cpu(msg->left_open_offset);
+	left_close = le16_to_cpu(msg->left_close_offset);
+	right_open = le16_to_cpu(msg->right_open_offset);
+	right_close = le16_to_cpu(msg->right_close_offset);
+	period = le16_to_cpu(msg->frame_sync_period);
+	period_frac = msg->frame_sync_period_fraction;
+
+	print_field("  Frame sync instant: 0x%8.8x", instant & 0x7fffffff);
+	print_field("  Video mode: %s (%d)", mode ? "Dual View" : "3D", mode);
+	print_field("  Bluetooth clock phase: %d usec (0x%4.4x)",
+						phase, phase);
+	print_field("  Left lense shutter open offset: %d usec (0x%4.4x)",
+						left_open, left_open);
+	print_field("  Left lense shutter close offset: %d usec (0x%4.4x)",
+						left_close, left_close);
+	print_field("  Right lense shutter open offset: %d usec (0x%4.4x)",
+						right_open, right_open);
+	print_field("  Right lense shutter close offset: %d usec (0x%4.4x)",
+						right_close, right_close);
+	print_field("  Frame sync period: %d.%d usec (0x%4.4x 0x%2.2x)",
+						period, period_frac * 256,
+						period, period_frac);
 }
 
 void packet_hexdump(const unsigned char *buf, uint16_t len)
@@ -5409,8 +5467,12 @@ static void read_local_version_rsp(const void *data, uint8_t size)
 	}
 
 	print_manufacturer(rsp->manufacturer);
-	print_manufacturer_subversion(rsp->manufacturer, rsp->lmp_subver);
-	print_manufacturer_revision(rsp->manufacturer, rsp->hci_rev);
+
+	switch (le16_to_cpu(rsp->manufacturer)) {
+	case 15:
+		print_manufacturer_broadcom(rsp->lmp_subver, rsp->hci_rev);
+		break;
+	}
 }
 
 static void read_local_commands_rsp(const void *data, uint8_t size)
@@ -5860,7 +5922,7 @@ static void le_set_adv_parameters_cmd(const void *data, uint8_t size)
 		str = "Scannable undirected - ADV_SCAN_IND";
 		break;
 	case 0x03:
-		str = "Non connectable undirect - ADV_NONCONN_IND";
+		str = "Non connectable undirected - ADV_NONCONN_IND";
 		break;
 	case 0x04:
 		str = "Connectable directed - ADV_DIRECT_IND (low duty cycle)";
@@ -6735,7 +6797,7 @@ static const struct opcode_data opcode_table[] = {
 				host_buffer_size_cmd, 7, true,
 				status_rsp, 1, true },
 	{ 0x0c35,  87, "Host Number of Completed Packets",
-				host_num_completed_packets_cmd, 1, true },
+				host_num_completed_packets_cmd, 5, false },
 	{ 0x0c36,  88, "Read Link Supervision Timeout",
 				read_link_supv_timeout_cmd, 2, true,
 				read_link_supv_timeout_rsp, 5, true },
@@ -7254,7 +7316,12 @@ static void remote_version_complete_evt(const void *data, uint8_t size)
 	print_handle(evt->handle);
 	print_lmp_version(evt->lmp_ver, evt->lmp_subver);
 	print_manufacturer(evt->manufacturer);
-	print_manufacturer_subversion(evt->manufacturer, evt->lmp_subver);
+
+	switch (le16_to_cpu(evt->manufacturer)) {
+	case 15:
+		print_manufacturer_broadcom(evt->lmp_subver, 0xffff);
+		break;
+	}
 }
 
 static void qos_setup_complete_evt(const void *data, uint8_t size)
@@ -7426,11 +7493,15 @@ static void mode_change_evt(const void *data, uint8_t size)
 
 static void return_link_keys_evt(const void *data, uint8_t size)
 {
-	uint8_t num_keys = *((uint8_t *) data);
+	const struct bt_hci_evt_return_link_keys *evt = data;
+	uint8_t i;
 
-	print_field("Num keys: %d", num_keys);
+	print_field("Num keys: %d", evt->num_keys);
 
-	packet_hexdump(data + 1, size - 1);
+	for (i = 0; i < evt->num_keys; i++) {
+		print_bdaddr(evt->keys + (i * 22));
+		print_link_key(evt->keys + (i * 22) + 6);
+	}
 }
 
 static void pin_code_request_evt(const void *data, uint8_t size)
@@ -7900,7 +7971,10 @@ static void slave_broadcast_receive_evt(const void *data, uint8_t size)
 		print_text(COLOR_ERROR, "invalid data size (%d != %d)",
 						size - 18, evt->length);
 
-	packet_hexdump(data + 18, size - 18);
+	if (evt->lt_addr == 0x01 && evt->length == 17)
+		print_3d_broadcast(data + 18, size - 18);
+	else
+		packet_hexdump(data + 18, size - 18);
 }
 
 static void slave_broadcast_timeout_evt(const void *data, uint8_t size)

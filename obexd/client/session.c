@@ -35,11 +35,12 @@
 #include <sys/stat.h>
 
 #include <glib.h>
-#include <gdbus/gdbus.h>
-#include <gobex/gobex.h>
 
+#include "gdbus/gdbus.h"
+#include "gobex/gobex.h"
+
+#include "obexd/src/log.h"
 #include "dbus.h"
-#include "log.h"
 #include "transfer.h"
 #include "session.h"
 #include "driver.h"
@@ -1120,15 +1121,11 @@ static int session_process_setpath(struct pending_request *p, GError **err)
 
 	p->req_id = g_obex_setpath(p->session->obex, first, setpath_cb, p, err);
 	if (*err != NULL)
-		goto fail;
+		return (*err)->code;
 
 	p->session->p = p;
 
 	return 0;
-
-fail:
-	pending_request_free(p);
-	return (*err)->code;
 }
 
 guint obc_session_setpath(struct obc_session *session, const char *path,
@@ -1148,6 +1145,12 @@ guint obc_session_setpath(struct obc_session *session, const char *path,
 	data->func = func;
 	data->user_data = user_data;
 	data->remaining = g_strsplit(strlen(path) ? path : "/", "/", 0);
+
+	if (!data->remaining || !data->remaining[0]) {
+		error("obc_session_setpath: invalid path %s", path);
+		g_set_error(err, OBEX_IO_ERROR, -EINVAL, "Invalid argument");
+		return 0;
+	}
 
 	p = pending_request_new(session, session_process_setpath, NULL,
 				setpath_op_complete, data, setpath_data_free);
@@ -1206,15 +1209,11 @@ static int session_process_mkdir(struct pending_request *p, GError **err)
 	p->req_id = g_obex_mkdir(p->session->obex, req->srcname, async_cb, p,
 									err);
 	if (*err != NULL)
-		goto fail;
+		return (*err)->code;
 
 	p->session->p = p;
 
 	return 0;
-
-fail:
-	pending_request_free(p);
-	return (*err)->code;
 }
 
 guint obc_session_mkdir(struct obc_session *session, const char *folder,
@@ -1248,15 +1247,11 @@ static int session_process_copy(struct pending_request *p, GError **err)
 	p->req_id = g_obex_copy(p->session->obex, req->srcname, req->destname,
 							async_cb, p, err);
 	if (*err != NULL)
-		goto fail;
+		return (*err)->code;
 
 	p->session->p = p;
 
 	return 0;
-
-fail:
-	pending_request_free(p);
-	return (*err)->code;
 }
 
 guint obc_session_copy(struct obc_session *session, const char *srcname,
@@ -1291,15 +1286,11 @@ static int session_process_move(struct pending_request *p, GError **err)
 	p->req_id = g_obex_move(p->session->obex, req->srcname, req->destname,
 							async_cb, p, err);
 	if (*err != NULL)
-		goto fail;
+		return (*err)->code;
 
 	p->session->p = p;
 
 	return 0;
-
-fail:
-	pending_request_free(p);
-	return (*err)->code;
 }
 
 guint obc_session_move(struct obc_session *session, const char *srcname,
@@ -1334,15 +1325,11 @@ static int session_process_delete(struct pending_request *p, GError **err)
 	p->req_id = g_obex_delete(p->session->obex, req->srcname, async_cb, p,
 									err);
 	if (*err != NULL)
-		goto fail;
+		return (*err)->code;
 
 	p->session->p = p;
 
 	return 0;
-
-fail:
-	pending_request_free(p);
-	return (*err)->code;
 }
 
 guint obc_session_delete(struct obc_session *session, const char *file,

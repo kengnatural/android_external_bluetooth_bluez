@@ -25,6 +25,7 @@
 #include <errno.h>
 
 #include "src/shared/att.h"
+#include "lib/bluetooth.h"
 #include "lib/uuid.h"
 #include "src/shared/queue.h"
 #include "src/shared/gatt-db.h"
@@ -168,8 +169,9 @@ static void attribute_read_cb(struct gatt_db_attribute *attrib, int err,
 }
 
 static bool encode_read_by_grp_type_rsp(struct gatt_db *db, struct queue *q,
-						uint16_t mtu,
-						uint8_t *pdu, uint16_t *len)
+						struct bt_att *att,
+						uint16_t mtu, uint8_t *pdu,
+						uint16_t *len)
 {
 	int iter = 0;
 	uint16_t start_handle, end_handle;
@@ -190,7 +192,7 @@ static bool encode_read_by_grp_type_rsp(struct gatt_db *db, struct queue *q,
 		 */
 		if (!gatt_db_attribute_read(attrib, 0,
 						BT_ATT_OP_READ_BY_GRP_TYPE_REQ,
-						NULL, attribute_read_cb,
+						att, attribute_read_cb,
 						&value) || !value.iov_len)
 			return false;
 
@@ -291,8 +293,8 @@ static void read_by_grp_type_cb(uint8_t opcode, const void *pdu,
 		goto error;
 	}
 
-	if (!encode_read_by_grp_type_rsp(server->db, q, mtu, rsp_pdu,
-								&rsp_len)) {
+	if (!encode_read_by_grp_type_rsp(server->db, q, server->att, mtu,
+							rsp_pdu, &rsp_len)) {
 		ecode = BT_ATT_ERROR_UNLIKELY;
 		goto error;
 	}
@@ -375,12 +377,39 @@ done:
 	process_read_by_type(op);
 }
 
+static uint8_t check_permissions(struct bt_gatt_server *server,
+				struct gatt_db_attribute *attr, uint32_t mask)
+{
+	uint32_t perm;
+	int security;
+
+	perm = gatt_db_attribute_get_permissions(attr);
+
+	if (perm && mask & BT_ATT_PERM_READ && !(perm & BT_ATT_PERM_READ))
+		return BT_ATT_ERROR_READ_NOT_PERMITTED;
+
+	if (perm && mask & BT_ATT_PERM_WRITE && !(perm & BT_ATT_PERM_WRITE))
+		return BT_ATT_ERROR_WRITE_NOT_PERMITTED;
+
+	perm &= mask;
+	if (!perm)
+		return 0;
+
+	security = bt_att_get_security(server->att);
+	if (perm & BT_ATT_PERM_AUTHEN && security < BT_ATT_SECURITY_HIGH)
+		return BT_ATT_ERROR_AUTHENTICATION;
+
+	if (perm & BT_ATT_PERM_ENCRYPT && security < BT_ATT_SECURITY_MEDIUM)
+		return BT_ATT_ERROR_INSUFFICIENT_ENCRYPTION;
+
+	return 0;
+}
+
 static void process_read_by_type(struct async_read_op *op)
 {
 	struct bt_gatt_server *server = op->server;
 	uint8_t ecode;
 	struct gatt_db_attribute *attr;
-	uint32_t perm;
 
 	attr = queue_pop_head(op->db_data);
 
@@ -393,21 +422,14 @@ static void process_read_by_type(struct async_read_op *op)
 		return;
 	}
 
-	perm = gatt_db_attribute_get_permissions(attr);
-
-	/*
-	 * Check for the READ access permission. Encryption,
-	 * authentication, and authorization permissions need to be
-	 * checked by the read handler, since bt_att is agnostic to
-	 * connection type and doesn't have security information on it.
-	 */
-	if (perm && !(perm & BT_ATT_PERM_READ)) {
-		ecode = BT_ATT_ERROR_READ_NOT_PERMITTED;
+	ecode = check_permissions(server, attr, BT_ATT_PERM_READ |
+						BT_ATT_PERM_READ_AUTHEN |
+						BT_ATT_PERM_READ_ENCRYPT);
+	if (ecode)
 		goto error;
-	}
 
-	if (gatt_db_attribute_read(attr, 0, op->opcode, NULL,
-				read_by_type_read_complete_cb, op))
+	if (gatt_db_attribute_read(attr, 0, op->opcode, server->att,
+					read_by_type_read_complete_cb, op))
 		return;
 
 	ecode = BT_ATT_ERROR_UNLIKELY;
@@ -499,27 +521,6 @@ error:
 	queue_destroy(q, NULL);
 }
 
-static void put_uuid_le(const bt_uuid_t *src, void *dst)
-{
-	bt_uuid_t uuid;
-
-	switch (src->type) {
-	case BT_UUID16:
-		put_le16(src->value.u16, dst);
-		break;
-	case BT_UUID128:
-		bswap_128(&src->value.u128, dst);
-		break;
-	case BT_UUID32:
-		bt_uuid_to_uuid128(src, &uuid);
-		bswap_128(&uuid.value.u128, dst);
-		break;
-	case BT_UUID_UNSPEC:
-	default:
-		break;
-	}
-}
-
 static bool encode_find_info_rsp(struct gatt_db *db, struct queue *q,
 						uint16_t mtu,
 						uint8_t *pdu, uint16_t *len)
@@ -564,7 +565,7 @@ static bool encode_find_info_rsp(struct gatt_db *db, struct queue *q,
 			break;
 
 		put_le16(handle, pdu + iter);
-		put_uuid_le(type, pdu + iter + 2);
+		bt_uuid_to_le(type, pdu + iter + 2);
 
 		iter += uuid_len + 2;
 	}
@@ -771,7 +772,6 @@ static void write_cb(uint8_t opcode, const void *pdu,
 	uint16_t handle = 0;
 	struct async_write_op *op = NULL;
 	uint8_t ecode;
-	uint32_t perm;
 
 	if (length < 2) {
 		ecode = BT_ATT_ERROR_INVALID_PDU;
@@ -790,12 +790,11 @@ static void write_cb(uint8_t opcode, const void *pdu,
 				(opcode == BT_ATT_OP_WRITE_REQ) ? "Req" : "Cmd",
 				handle);
 
-	perm = gatt_db_attribute_get_permissions(attr);
-
-	if (!(perm & BT_ATT_PERM_WRITE)) {
-		ecode = BT_ATT_ERROR_WRITE_NOT_PERMITTED;
+	ecode = check_permissions(server, attr, BT_ATT_PERM_WRITE |
+						BT_ATT_PERM_WRITE_AUTHEN |
+						BT_ATT_PERM_WRITE_ENCRYPT);
+	if (ecode)
 		goto error;
-	}
 
 	if (server->pending_write_op) {
 		ecode = BT_ATT_ERROR_UNLIKELY;
@@ -813,7 +812,8 @@ static void write_cb(uint8_t opcode, const void *pdu,
 	server->pending_write_op = op;
 
 	if (gatt_db_attribute_write(attr, 0, pdu + 2, length - 2, opcode,
-						NULL, write_complete_cb, op))
+							server->att,
+							write_complete_cb, op))
 		return;
 
 	if (op)
@@ -889,7 +889,6 @@ static void handle_read_req(struct bt_gatt_server *server, uint8_t opcode,
 {
 	struct gatt_db_attribute *attr;
 	uint8_t ecode;
-	uint32_t perm;
 	struct async_read_op *op = NULL;
 
 	attr = gatt_db_get_attribute(server->db, handle);
@@ -903,12 +902,11 @@ static void handle_read_req(struct bt_gatt_server *server, uint8_t opcode,
 			opcode == BT_ATT_OP_READ_BLOB_REQ ? "Blob " : "",
 			handle);
 
-	perm = gatt_db_attribute_get_permissions(attr);
-
-	if (perm && !(perm & BT_ATT_PERM_READ)) {
-		ecode = BT_ATT_ERROR_READ_NOT_PERMITTED;
+	ecode = check_permissions(server, attr, BT_ATT_PERM_READ |
+						BT_ATT_PERM_READ_AUTHEN |
+						BT_ATT_PERM_READ_ENCRYPT);
+	if (ecode)
 		goto error;
-	}
 
 	if (server->pending_read_op) {
 		ecode = BT_ATT_ERROR_UNLIKELY;
@@ -925,7 +923,7 @@ static void handle_read_req(struct bt_gatt_server *server, uint8_t opcode,
 	op->server = server;
 	server->pending_read_op = op;
 
-	if (gatt_db_attribute_read(attr, offset, opcode, NULL,
+	if (gatt_db_attribute_read(attr, offset, opcode, server->att,
 							read_complete_cb, op))
 		return;
 
@@ -998,9 +996,8 @@ static void read_multiple_complete_cb(struct gatt_db_attribute *attr, int err,
 {
 	struct read_multiple_resp_data *data = user_data;
 	struct gatt_db_attribute *next_attr;
-	uint32_t perm;
-
 	uint16_t handle = gatt_db_attribute_get_handle(attr);
+	uint8_t ecode;
 
 	if (err != 0) {
 		bt_att_send_error_rsp(data->server->att,
@@ -1009,12 +1006,12 @@ static void read_multiple_complete_cb(struct gatt_db_attribute *attr, int err,
 		return;
 	}
 
-	perm = gatt_db_attribute_get_permissions(attr);
-
-	if (perm && !(perm & BT_ATT_PERM_READ)) {
+	ecode = check_permissions(data->server, attr, BT_ATT_PERM_READ |
+						BT_ATT_PERM_READ_AUTHEN |
+						BT_ATT_PERM_READ_ENCRYPT);
+	if (ecode) {
 		bt_att_send_error_rsp(data->server->att,
-					BT_ATT_OP_READ_MULT_REQ, handle,
-					BT_ATT_ERROR_READ_NOT_PERMITTED);
+					BT_ATT_OP_READ_MULT_REQ, handle, ecode);
 		read_multiple_resp_data_free(data);
 		return;
 	}
@@ -1051,7 +1048,8 @@ static void read_multiple_complete_cb(struct gatt_db_attribute *attr, int err,
 		return;
 	}
 
-	if (!gatt_db_attribute_read(next_attr, 0, BT_ATT_OP_READ_MULT_REQ, NULL,
+	if (!gatt_db_attribute_read(next_attr, 0, BT_ATT_OP_READ_MULT_REQ,
+					data->server->att,
 					read_multiple_complete_cb, data)) {
 		bt_att_send_error_rsp(data->server->att,
 						BT_ATT_OP_READ_MULT_REQ,
@@ -1107,7 +1105,7 @@ static void read_multiple_cb(uint8_t opcode, const void *pdu,
 		goto error;
 	}
 
-	if (gatt_db_attribute_read(attr, 0, opcode, NULL,
+	if (gatt_db_attribute_read(attr, 0, opcode, server->att,
 					read_multiple_complete_cb, &data))
 		return;
 
@@ -1125,7 +1123,6 @@ static void prep_write_cb(uint8_t opcode, const void *pdu,
 	uint16_t offset;
 	struct gatt_db_attribute *attr;
 	uint8_t ecode;
-	uint32_t perm;
 
 	if (length < 4) {
 		ecode = BT_ATT_ERROR_INVALID_PDU;
@@ -1149,19 +1146,11 @@ static void prep_write_cb(uint8_t opcode, const void *pdu,
 	util_debug(server->debug_callback, server->debug_data,
 				"Prep Write Req - handle: 0x%04x", handle);
 
-	perm = gatt_db_attribute_get_permissions(attr);
-
-	/*
-	 * TODO: The "Prepare Write" request requires security permission checks
-	 * to be performed before the write is executed. I.e., we can't leave
-	 * the permission check to the upper layer since we can't call
-	 * gatt_db_write until the entire queue is atomically processed during
-	 * an "Execute Write" request. Figure out how to make this check here.
-	 */
-	if (!(perm & BT_ATT_PERM_WRITE)) {
-		ecode = BT_ATT_ERROR_WRITE_NOT_PERMITTED;
+	ecode = check_permissions(server, attr, BT_ATT_PERM_WRITE |
+						BT_ATT_PERM_WRITE_AUTHEN |
+						BT_ATT_PERM_WRITE_ENCRYPT);
+	if (ecode)
 		goto error;
-	}
 
 	prep_data = new0(struct prep_write_data, 1);
 	if (!prep_data) {
@@ -1234,7 +1223,8 @@ static void exec_next_prep_write(struct bt_gatt_server *server,
 
 	status = gatt_db_attribute_write(attr, next->offset,
 						next->value, next->length,
-						BT_ATT_OP_EXEC_WRITE_REQ, NULL,
+						BT_ATT_OP_EXEC_WRITE_REQ,
+						server->att,
 						exec_write_complete_cb, server);
 
 	prep_write_data_destroy(next);

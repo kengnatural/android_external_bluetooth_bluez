@@ -5,6 +5,7 @@ bin_PROGRAMS += client/bluetoothctl
 client_bluetoothctl_SOURCES = client/main.c \
 					client/display.h client/display.c \
 					client/agent.h client/agent.c \
+					client/gatt.h client/gatt.c \
 					monitor/uuid.h monitor/uuid.c
 client_bluetoothctl_LDADD = gdbus/libgdbus-internal.la @GLIB_LIBS@ @DBUS_LIBS@ \
 				-lreadline
@@ -27,6 +28,7 @@ monitor_btmon_SOURCES = monitor/main.c monitor/bt.h \
 				monitor/sdp.h monitor/sdp.c \
 				monitor/avctp.h monitor/avctp.c \
 				monitor/rfcomm.h monitor/rfcomm.c \
+				monitor/bnep.h monitor/bnep.c \
 				monitor/uuid.h monitor/uuid.c \
 				monitor/hwdb.h monitor/hwdb.c \
 				monitor/keys.h monitor/keys.c \
@@ -36,11 +38,13 @@ monitor_btmon_LDADD = lib/libbluetooth-internal.la \
 endif
 
 if EXPERIMENTAL
-noinst_PROGRAMS += emulator/btvirt emulator/b1ee emulator/hfp tools/3dsp \
+noinst_PROGRAMS += emulator/btvirt emulator/b1ee emulator/hfp \
+					peripheral/btsensor tools/3dsp \
 					tools/mgmt-tester tools/gap-tester \
 					tools/l2cap-tester tools/sco-tester \
 					tools/smp-tester tools/hci-tester \
-					tools/rfcomm-tester
+					tools/rfcomm-tester tools/bnep-tester \
+					tools/userchan-tester
 
 emulator_btvirt_SOURCES = emulator/main.c monitor/bt.h \
 				emulator/serial.h emulator/serial.c \
@@ -59,6 +63,15 @@ emulator_b1ee_LDADD = src/libshared-mainloop.la
 
 emulator_hfp_SOURCES = emulator/hfp.c
 emulator_hfp_LDADD = src/libshared-mainloop.la
+
+peripheral_btsensor_SOURCES = peripheral/main.c \
+				peripheral/efivars.h peripheral/efivars.c \
+				peripheral/attach.h peripheral/attach.c \
+				peripheral/log.h peripheral/log.c \
+				peripheral/gap.h peripheral/gap.c \
+				peripheral/gatt.h peripheral/gatt.c
+peripheral_btsensor_LDADD = src/libshared-mainloop.la \
+				lib/libbluetooth-internal.la
 
 tools_3dsp_SOURCES = tools/3dsp.c monitor/bt.h
 tools_3dsp_LDADD = src/libshared-mainloop.la
@@ -85,6 +98,14 @@ tools_rfcomm_tester_SOURCES = tools/rfcomm-tester.c monitor/bt.h \
 				emulator/bthost.h emulator/bthost.c \
 				emulator/smp.c
 tools_rfcomm_tester_LDADD = lib/libbluetooth-internal.la \
+				src/libshared-glib.la @GLIB_LIBS@
+
+tools_bnep_tester_SOURCES = tools/bnep-tester.c monitor/bt.h \
+				emulator/hciemu.h emulator/hciemu.c \
+				emulator/btdev.h emulator/btdev.c \
+				emulator/bthost.h emulator/bthost.c \
+				emulator/smp.c
+tools_bnep_tester_LDADD = lib/libbluetooth-internal.la \
 				src/libshared-glib.la @GLIB_LIBS@
 
 tools_smp_tester_SOURCES = tools/smp-tester.c monitor/bt.h \
@@ -115,6 +136,14 @@ tools_sco_tester_LDADD = lib/libbluetooth-internal.la \
 
 tools_hci_tester_SOURCES = tools/hci-tester.c monitor/bt.h
 tools_hci_tester_LDADD = src/libshared-glib.la @GLIB_LIBS@
+
+tools_userchan_tester_SOURCES = tools/userchan-tester.c monitor/bt.h \
+				emulator/hciemu.h emulator/hciemu.c \
+				emulator/btdev.h emulator/btdev.c \
+				emulator/bthost.h emulator/bthost.c \
+				emulator/smp.c
+tools_userchan_tester_LDADD = lib/libbluetooth-internal.la \
+				src/libshared-glib.la @GLIB_LIBS@
 endif
 
 if TOOLS
@@ -220,11 +249,14 @@ if EXPERIMENTAL
 noinst_PROGRAMS += tools/bdaddr tools/avinfo tools/avtest \
 			tools/scotest tools/amptest tools/hwdb \
 			tools/hcieventmask tools/hcisecfilter \
-			tools/btmgmt tools/btinfo tools/btattach \
+			tools/btinfo tools/btattach \
 			tools/btsnoop tools/btproxy \
-			tools/btiotest tools/mcaptest tools/cltest \
-			tools/oobtest tools/seq2bseq tools/ibeacon \
-			tools/btgatt-client tools/btgatt-server
+			tools/btiotest tools/bneptest tools/mcaptest \
+			tools/cltest tools/oobtest tools/seq2bseq \
+			tools/nokfw tools/create-image \
+			tools/eddystone tools/ibeacon \
+			tools/btgatt-client tools/btgatt-server \
+			tools/test-runner tools/check-selftest
 
 tools_bdaddr_SOURCES = tools/bdaddr.c src/oui.h src/oui.c
 tools_bdaddr_LDADD = lib/libbluetooth-internal.la @UDEV_LIBS@
@@ -240,9 +272,6 @@ tools_amptest_LDADD = lib/libbluetooth-internal.la
 tools_hwdb_LDADD = lib/libbluetooth-internal.la
 
 tools_hcieventmask_LDADD = lib/libbluetooth-internal.la
-
-tools_btmgmt_SOURCES = tools/btmgmt.c src/uuid-helper.c
-tools_btmgmt_LDADD = lib/libbluetooth-internal.la src/libshared-mainloop.la
 
 tools_btinfo_SOURCES = tools/btinfo.c monitor/bt.h
 tools_btinfo_LDADD = src/libshared-mainloop.la
@@ -265,6 +294,12 @@ tools_mcaptest_SOURCES = tools/mcaptest.c \
 				profiles/health/mcap.h profiles/health/mcap.c
 tools_mcaptest_LDADD = lib/libbluetooth-internal.la @GLIB_LIBS@
 
+tools_bneptest_SOURCES = tools/bneptest.c \
+				btio/btio.h btio/btio.c \
+				src/log.h src/log.c \
+				profiles/network/bnep.h profiles/network/bnep.c
+tools_bneptest_LDADD = lib/libbluetooth-internal.la @GLIB_LIBS@
+
 tools_cltest_SOURCES = tools/cltest.c
 tools_cltest_LDADD = lib/libbluetooth-internal.la src/libshared-mainloop.la
 
@@ -272,6 +307,13 @@ tools_oobtest_SOURCES = tools/oobtest.c
 tools_oobtest_LDADD = lib/libbluetooth-internal.la src/libshared-mainloop.la
 
 tools_seq2bseq_SOURCES = tools/seq2bseq.c
+
+tools_nokfw_SOURCES = tools/nokfw.c
+
+tools_create_image_SOURCES = tools/create-image.c
+
+tools_eddystone_SOURCES = tools/eddystone.c monitor/bt.h
+tools_eddystone_LDADD = src/libshared-mainloop.la
 
 tools_ibeacon_SOURCES = tools/ibeacon.c monitor/bt.h
 tools_ibeacon_LDADD = src/libshared-mainloop.la
@@ -288,7 +330,7 @@ EXTRA_DIST += tools/bdaddr.1
 endif
 
 if READLINE
-noinst_PROGRAMS += attrib/gatttool \
+noinst_PROGRAMS += attrib/gatttool tools/btmgmt \
 			tools/obex-client-tool tools/obex-server-tool \
 			tools/bluetooth-player tools/obexctl
 
@@ -318,6 +360,10 @@ tools_obexctl_SOURCES = tools/obexctl.c \
 				client/display.h client/display.c
 tools_obexctl_LDADD = gdbus/libgdbus-internal.la \
 				@GLIB_LIBS@ @DBUS_LIBS@ -lreadline
+
+tools_btmgmt_SOURCES = tools/btmgmt.c src/uuid-helper.c client/display.c
+tools_btmgmt_LDADD = lib/libbluetooth-internal.la src/libshared-mainloop.la \
+				-lreadline
 endif
 
 if EXPERIMENTAL
@@ -360,4 +406,5 @@ test_scripts += test/sap_client.py test/bluezutils.py \
 		test/service-ftp.xml test/simple-player test/test-nap \
 		test/test-heartrate test/test-alert test/test-hfp \
 		test/test-cyclingspeed test/opp-client test/ftp-client \
-		test/pbap-client test/map-client
+		test/pbap-client test/map-client test/example-advertisement \
+		test/example-gatt-server test/example-gatt-client
