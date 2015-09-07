@@ -2106,6 +2106,7 @@ docdir = @docdir@
 dvidir = @dvidir@
 enable_coverage = @enable_coverage@
 enable_dbus_run_session = @enable_dbus_run_session@
+enable_valgrind = @enable_valgrind@
 exec_prefix = @exec_prefix@
 host = @host@
 host_alias = @host_alias@
@@ -2205,8 +2206,8 @@ EXTRA_DIST = src/bluetooth.service.in src/org.bluez.service \
 	doc/alert-api.txt doc/proximity-api.txt doc/heartrate-api.txt \
 	doc/thermometer-api.txt doc/cyclingspeed-api.txt \
 	doc/gatt-api.txt doc/advertising-api.txt doc/obex-api.txt \
-	doc/obex-agent-api.txt tools/magic.btsnoop \
-	$(manual_pages:.1=.txt)
+	doc/obex-agent-api.txt doc/pics-opp.txt doc/pixit-opp.txt \
+	doc/pts-opp.txt tools/magic.btsnoop $(manual_pages:.1=.txt)
 include_HEADERS = $(am__append_1)
 AM_CFLAGS = $(WARNING_CFLAGS) $(MISC_CFLAGS) $(am__append_29) \
 	@DBUS_CFLAGS@ @GLIB_CFLAGS@ $(am__empty)
@@ -2236,7 +2237,7 @@ extra_sources = lib/uuid.c
 local_headers = $(foreach file,$(lib_headers), lib/bluetooth/$(notdir $(file)))
 BUILT_SOURCES = $(local_headers) src/builtin.h obexd/src/builtin.h
 @LIBRARY_TRUE@lib_libbluetooth_la_SOURCES = $(lib_headers) $(lib_sources)
-@LIBRARY_TRUE@lib_libbluetooth_la_LDFLAGS = $(AM_LDFLAGS) -version-info 21:6:18
+@LIBRARY_TRUE@lib_libbluetooth_la_LDFLAGS = $(AM_LDFLAGS) -version-info 21:7:18
 @LIBRARY_TRUE@lib_libbluetooth_la_DEPENDENCIES = $(local_headers)
 lib_libbluetooth_internal_la_SOURCES = $(lib_headers) $(lib_sources) \
 					$(extra_headers) $(extra_sources)
@@ -2389,7 +2390,8 @@ test_scripts = test/sap_client.py test/bluezutils.py test/dbusdef.py \
 	test/test-alert test/test-hfp test/test-cyclingspeed \
 	test/opp-client test/ftp-client test/pbap-client \
 	test/map-client test/example-advertisement \
-	test/example-gatt-server test/example-gatt-client
+	test/example-gatt-server test/example-gatt-client \
+	test/test-gatt-profile
 unit_tests = $(am__append_32) unit/test-eir unit/test-uuid \
 	unit/test-textfile unit/test-crc unit/test-crypto \
 	unit/test-ecc unit/test-ringbuf unit/test-queue unit/test-mgmt \
@@ -3059,6 +3061,10 @@ unit_test_gattrib_LDADD = lib/libbluetooth-internal.la \
 
 AM_TESTS_ENVIRONMENT = MALLOC_CHECK_=3 MALLOC_PERTURB_=69 \
 	$(am__append_35)
+@VALGRIND_TRUE@LOG_COMPILER = valgrind --error-exitcode=1 --num-callers=30
+@VALGRIND_TRUE@LOG_FLAGS = --trace-children=yes --leak-check=full --show-reachable=no \
+@VALGRIND_TRUE@		--suppressions=$(srcdir)/tools/valgrind.supp --quiet
+
 pkgconfigdir = $(libdir)/pkgconfig
 @LIBRARY_TRUE@pkgconfig_DATA = lib/bluez.pc
 manual_pages = doc/btmon.1
