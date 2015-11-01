@@ -3030,7 +3030,7 @@ static void avrcp_play_item(struct avrcp *session, uint64_t uid)
 
 	length = AVRCP_HEADER_LENGTH + ntohs(pdu->params_len);
 
-	avctp_send_vendordep_req(session->conn, AVC_CTYPE_STATUS,
+	avctp_send_vendordep_req(session->conn, AVC_CTYPE_CONTROL,
 					AVC_SUBUNIT_PANEL, buf, length,
 					NULL, session);
 }
@@ -3076,7 +3076,7 @@ static void avrcp_add_to_nowplaying(struct avrcp *session, uint64_t uid)
 
 	length = AVRCP_HEADER_LENGTH + ntohs(pdu->params_len);
 
-	avctp_send_vendordep_req(session->conn, AVC_CTYPE_STATUS,
+	avctp_send_vendordep_req(session->conn, AVC_CTYPE_CONTROL,
 					AVC_SUBUNIT_PANEL, buf, length,
 					NULL, session);
 }
@@ -3191,6 +3191,15 @@ static const struct media_player_callback ct_cbs = {
 	.total_items = ct_get_total_numberofitems,
 };
 
+static void set_ct_player(struct avrcp *session, struct avrcp_player *player)
+{
+	struct btd_service *service;
+
+	session->controller->player = player;
+	service = btd_device_get_service(session->dev, AVRCP_TARGET_UUID);
+	control_set_player(service, media_player_get_path(player->user_data));
+}
+
 static struct avrcp_player *create_ct_player(struct avrcp *session,
 								uint16_t id)
 {
@@ -3212,7 +3221,7 @@ static struct avrcp_player *create_ct_player(struct avrcp *session,
 	player->destroy = (GDestroyNotify) media_player_destroy;
 
 	if (session->controller->player == NULL)
-		session->controller->player = player;
+		set_ct_player(session, player);
 
 	session->controller->players = g_slist_prepend(
 						session->controller->players,
@@ -3320,10 +3329,15 @@ static void player_remove(gpointer data)
 
 	for (l = player->sessions; l; l = l->next) {
 		struct avrcp *session = l->data;
+		struct avrcp_data *controller = session->controller;
 
-		session->controller->players = g_slist_remove(
-						session->controller->players,
-						player);
+		controller->players = g_slist_remove(controller->players,
+								player);
+
+		/* Check if current player is being removed */
+		if (controller->player == player)
+			set_ct_player(session, g_slist_nth_data(
+						controller->players, 0));
 	}
 
 	player_destroy(player);
@@ -3373,9 +3387,6 @@ static gboolean avrcp_get_media_player_list_rsp(struct avctp *conn,
 
 		i += len;
 	}
-
-	if (g_slist_find(removed, session->controller->player))
-		session->controller->player = NULL;
 
 	g_slist_free_full(removed, player_remove);
 
@@ -3501,7 +3512,7 @@ static void avrcp_addressed_player_changed(struct avrcp *session,
 	}
 
 	player->uid_counter = get_be16(&pdu->params[3]);
-	session->controller->player = player;
+	set_ct_player(session, player);
 
 	if (player->features != NULL)
 		return;

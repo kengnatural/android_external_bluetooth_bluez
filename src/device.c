@@ -626,6 +626,9 @@ static void device_free(gpointer user_data)
 	g_slist_free_full(device->attios_offline, g_free);
 	g_slist_free_full(device->svc_callbacks, svc_dev_remove);
 
+	/* Reset callbacks since the device is going to be freed */
+	gatt_db_register(device->db, NULL, NULL, NULL, NULL);
+
 	attio_cleanup(device);
 
 	gatt_db_unref(device->db);
@@ -1355,6 +1358,12 @@ void device_request_disconnect(struct btd_device *device, DBusMessage *msg)
 	if (device->browse)
 		browse_request_cancel(device->browse);
 
+	if (device->att_io) {
+		g_io_channel_shutdown(device->att_io, FALSE, NULL);
+		g_io_channel_unref(device->att_io);
+		device->att_io = NULL;
+	}
+
 	if (device->connect) {
 		DBusMessage *reply = btd_error_failed(device->connect,
 								"Cancelled");
@@ -2006,7 +2015,7 @@ static void store_chrc(struct gatt_db_attribute *attr, void *user_data)
 
 	sprintf(handle, "%04hx", handle_num);
 	bt_uuid_to_string(&uuid, uuid_str, sizeof(uuid_str));
-	sprintf(value, GATT_CHARAC_UUID_STR ":%04hx:%02hx:%s", value_handle,
+	sprintf(value, GATT_CHARAC_UUID_STR ":%04hx:%02hhx:%s", value_handle,
 							properties, uuid_str);
 	g_key_file_set_string(key_file, "Attributes", handle, value);
 
@@ -3230,7 +3239,7 @@ static bool device_match_profile(struct btd_device *device,
 	return true;
 }
 
-static void probe_gatt_profile(struct gatt_db_attribute *attr, void *user_data)
+static void add_gatt_service(struct gatt_db_attribute *attr, void *user_data)
 {
 	struct btd_device *device = user_data;
 	struct btd_service *service;
@@ -3242,6 +3251,11 @@ static void probe_gatt_profile(struct gatt_db_attribute *attr, void *user_data)
 	gatt_db_attribute_get_service_uuid(attr, &uuid);
 	bt_uuid_to_string(&uuid, uuid_str, sizeof(uuid_str));
 
+	/* Check if service was already probed */
+	l = find_service_with_uuid(device->services, uuid_str);
+	if (l)
+		goto done;
+
 	/* Add UUID and probe service */
 	btd_device_add_uuid(device, uuid_str);
 
@@ -3250,21 +3264,24 @@ static void probe_gatt_profile(struct gatt_db_attribute *attr, void *user_data)
 	if (!l)
 		return;
 
+done:
 	/* Mark service as active to skip discovering it again */
 	gatt_db_service_set_active(attr, true);
 
 	service = l->data;
 	profile = btd_service_get_profile(service);
 
-	/* Don't claim attributes of external profiles */
-	if (profile->external)
-		return;
+	/* Claim attributes of internal profiles */
+	if (!profile->external) {
+		/* Mark the service as claimed by the existing profile. */
+		gatt_db_service_set_claimed(attr, true);
+	}
 
-	/* Mark the service as claimed by the existing profile. */
-	gatt_db_service_set_claimed(attr, true);
+	/* Notify driver about the new connection */
+	service_accept(service);
 }
 
-static void device_probe_gatt_profiles(struct btd_device *device)
+static void device_add_gatt_services(struct btd_device *device)
 {
 	char addr[18];
 
@@ -3275,7 +3292,7 @@ static void device_probe_gatt_profiles(struct btd_device *device)
 		return;
 	}
 
-	gatt_db_foreach_service(device->db, NULL, probe_gatt_profile, device);
+	gatt_db_foreach_service(device->db, NULL, add_gatt_service, device);
 }
 
 static void device_accept_gatt_profiles(struct btd_device *device)
@@ -3286,7 +3303,7 @@ static void device_accept_gatt_profiles(struct btd_device *device)
 		service_accept(l->data);
 }
 
-static void device_remove_gatt_profile(struct btd_device *device,
+static void device_remove_gatt_service(struct btd_device *device,
 						struct gatt_db_attribute *attr)
 {
 	struct btd_service *service;
@@ -3323,16 +3340,12 @@ static void gatt_service_added(struct gatt_db_attribute *attr, void *user_data)
 {
 	struct btd_device *device = user_data;
 	GSList *new_service = NULL;
-	bt_uuid_t uuid;
-	char uuid_str[MAX_LEN_UUID_STR];
 	uint16_t start, end;
-	GSList *l;
 
 	if (!bt_gatt_client_is_ready(device->client))
 		return;
 
-	gatt_db_attribute_get_service_data(attr, &start, &end, NULL, &uuid);
-	bt_uuid_to_string(&uuid, uuid_str, sizeof(uuid_str));
+	gatt_db_attribute_get_service_data(attr, &start, &end, NULL, NULL);
 
 	DBG("start: 0x%04x, end: 0x%04x", start, end);
 
@@ -3344,21 +3357,9 @@ static void gatt_service_added(struct gatt_db_attribute *attr, void *user_data)
 	if (!new_service)
 		return;
 
-	l = find_service_with_uuid(device->services, uuid_str);
-
 	device_register_primaries(device, new_service, -1);
 
-	/*
-	 * If the profile was probed for the first time then call accept on
-	 * the service.
-	 */
-	if (!l) {
-		l = find_service_with_uuid(device->services, uuid_str);
-		if (l)
-			service_accept(l->data);
-	}
-
-	btd_device_add_uuid(device, uuid_str);
+	add_gatt_service(attr, device);
 
 	btd_gatt_client_service_added(device->client_dbus, attr);
 
@@ -3437,7 +3438,7 @@ static void gatt_service_removed(struct gatt_db_attribute *attr,
 		 * remove it anyway.
 		 */
 		if (device->client || device->temporary == TRUE)
-			device_remove_gatt_profile(device, attr);
+			device_remove_gatt_service(device, attr);
 
 		g_free(l->data);
 		device->uuids = g_slist_delete_link(device->uuids, l);
@@ -4518,7 +4519,7 @@ static void register_gatt_services(struct btd_device *device)
 
 	device_register_primaries(device, services, -1);
 
-	device_probe_gatt_profiles(device);
+	device_add_gatt_services(device);
 
 	device_svc_resolved(device, device->bdaddr_type, 0);
 }
@@ -4538,8 +4539,6 @@ static void gatt_client_ready_cb(bool success, uint8_t att_ecode,
 	}
 
 	register_gatt_services(device);
-
-	device_accept_gatt_profiles(device);
 
 	btd_gatt_client_ready(device->client_dbus);
 
@@ -4584,6 +4583,12 @@ static void gatt_client_init(struct btd_device *device)
 
 	/* Notify attio so it can react to notifications */
 	g_slist_foreach(device->attios, attio_connected, device->attrib);
+
+	/*
+	 * Notify notify existing service about the new connection so they can
+	 * react to notifications while discovering services
+	 */
+	device_accept_gatt_profiles(device);
 
 	if (!bt_gatt_client_set_ready_handler(device->client,
 							gatt_client_ready_cb,
@@ -4779,7 +4784,7 @@ done:
 	}
 
 	if (device->connect) {
-		if (!device->le_state.svc_resolved)
+		if (!device->le_state.svc_resolved && !err)
 			device_browse_gatt(device, NULL);
 
 		if (err < 0)
