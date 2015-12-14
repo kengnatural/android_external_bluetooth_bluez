@@ -1638,6 +1638,12 @@ struct hal_ev_handsfree_hsp_key_press {
 	uint8_t bdaddr[6];
 } __attribute__((packed));
 
+#define HAL_EV_HANDSFREE_WBS		0x91
+struct hal_ev_handsfree_wbs {
+	uint8_t wbs;
+	uint8_t bdaddr[6];
+} __attribute__((packed));
+
 #define HAL_AVRCP_FEATURE_NONE			0x00
 #define HAL_AVRCP_FEATURE_METADATA		0x01
 #define HAL_AVRCP_FEATURE_ABSOLUTE_VOLUME	0x02
@@ -2092,6 +2098,12 @@ struct hal_ev_gatt_server_congestion {
 	uint8_t congested;
 } __attribute__((packed));
 
+#define HAL_EV_GATT_SERVER_MTU_CHANGED		0xb0
+struct hal_ev_gatt_server_mtu_changed {
+	int32_t conn_id;
+	int32_t mtu;
+} __attribute__((packed));
+
 #define HAL_GATT_PERMISSION_READ			0x0001
 #define HAL_GATT_PERMISSION_READ_ENCRYPTED		0x0002
 #define HAL_GATT_PERMISSION_READ_ENCRYPTED_MITM		0x0004
@@ -2107,8 +2119,9 @@ struct hal_ev_gatt_server_congestion {
 
 #define HAL_HF_CLIENT_CONN_STATE_DISCONNECTED		0x00
 #define HAL_HF_CLIENT_CONN_STATE_CONNECTING		0x01
-#define HAL_HF_CLIENT_CONN_STATE_SLC_CONNECTED		0x02
-#define HAL_HF_CLIENT_CONN_STATE_DISCONNECTING		0x03
+#define HAL_HF_CLIENT_CONN_STATE_CONNECTED		0x02
+#define HAL_HF_CLIENT_CONN_STATE_SLC_CONNECTED		0x03
+#define HAL_HF_CLIENT_CONN_STATE_DISCONNECTING		0x04
 
 #define HAL_HF_CLIENT_PEER_FEAT_3WAY		0x00000001
 #define HAL_HF_CLIENT_PEER_FEAT_ECNR		0x00000002

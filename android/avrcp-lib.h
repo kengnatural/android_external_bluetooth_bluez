@@ -126,6 +126,16 @@
 #define AVRCP_MEDIA_SEARCH			0x02
 #define AVRCP_MEDIA_NOW_PLAYING			0x03
 
+/* SDP features */
+#define AVRCP_FEATURE_CATEGORY_1	0x0001
+#define AVRCP_FEATURE_CATEGORY_2	0x0002
+#define AVRCP_FEATURE_CATEGORY_3	0x0004
+#define AVRCP_FEATURE_CATEGORY_4	0x0008
+#define AVRCP_FEATURE_PLAYER_SETTINGS	0x0010
+#define AVRCP_FEATURE_GROUP_NAVIGATION	0x0020
+#define AVRCP_FEATURE_BROWSING		0x0040
+#define AVRCP_FEATURE_MULTIPLE_PLAYERS	0x0080
+
 /* Company IDs for vendor dependent commands */
 #define IEEEID_BTSIG		0x001958
 
@@ -214,7 +224,7 @@ struct avrcp_control_cfm {
 					char **text, void *user_data);
 	bool (*register_notification) (struct avrcp *session, int err,
 					uint8_t code, uint8_t event,
-					uint8_t *params, void *user_data);
+					void *params, void *user_data);
 	void (*set_volume) (struct avrcp *session, int err, uint8_t volume,
 					void *user_data);
 	void (*set_addressed) (struct avrcp *session, int err,

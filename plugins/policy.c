@@ -32,8 +32,11 @@
 
 #include <glib.h>
 
+#include "lib/bluetooth.h"
+#include "lib/sdp.h"
 #include "lib/uuid.h"
 #include "lib/mgmt.h"
+
 #include "src/log.h"
 #include "src/plugin.h"
 #include "src/adapter.h"
@@ -45,13 +48,12 @@
 #define CONTROL_CONNECT_TIMEOUT 2
 #define SOURCE_RETRY_TIMEOUT 2
 #define SINK_RETRY_TIMEOUT SOURCE_RETRY_TIMEOUT
+#define CT_RETRY_TIMEOUT 1
+#define TG_RETRY_TIMEOUT CT_RETRY_TIMEOUT
 #define SOURCE_RETRIES 1
 #define SINK_RETRIES SOURCE_RETRIES
-
-/* Tracking of remote services to be auto-reconnected upon link loss */
-
-#define RECONNECT_GIVE_UP (3 * 60)
-#define RECONNECT_TIMEOUT 1
+#define CT_RETRIES 1
+#define TG_RETRIES CT_RETRIES
 
 struct reconnect_data {
 	struct btd_device *dev;
@@ -59,17 +61,26 @@ struct reconnect_data {
 	GSList *services;
 	guint timer;
 	bool active;
-	time_t start;
-	int timeout;
+	unsigned int attempt;
 };
 
 static const char *default_reconnect[] = {
 			HSP_AG_UUID, HFP_AG_UUID, A2DP_SOURCE_UUID, NULL };
 static char **reconnect_uuids = NULL;
+
+static const size_t default_attempts = 7;
+static size_t reconnect_attempts = 0;
+
+static const int default_intervals[] = { 1, 2, 4, 8, 16, 32, 64 };
+static int *reconnect_intervals = NULL;
+static size_t reconnect_intervals_len = 0;
+
 static GSList *reconnects = NULL;
 
 static unsigned int service_id = 0;
 static GSList *devices = NULL;
+
+static bool auto_enable = false;
 
 struct policy_data {
 	struct btd_device *dev;
@@ -79,7 +90,9 @@ struct policy_data {
 	guint sink_timer;
 	uint8_t sink_retries;
 	guint ct_timer;
+	uint8_t ct_retries;
 	guint tg_timer;
+	uint8_t tg_retries;
 };
 
 static void policy_connect(struct policy_data *data,
@@ -108,6 +121,7 @@ static gboolean policy_connect_ct(gpointer user_data)
 	struct btd_service *service;
 
 	data->ct_timer = 0;
+	data->ct_retries++;
 
 	service = btd_device_get_service(data->dev, AVRCP_REMOTE_UUID);
 	if (service != NULL)
@@ -116,13 +130,13 @@ static gboolean policy_connect_ct(gpointer user_data)
 	return FALSE;
 }
 
-static void policy_set_ct_timer(struct policy_data *data)
+static void policy_set_ct_timer(struct policy_data *data, int timeout)
 {
 	if (data->ct_timer > 0)
 		g_source_remove(data->ct_timer);
 
-	data->ct_timer = g_timeout_add_seconds(CONTROL_CONNECT_TIMEOUT,
-						policy_connect_ct, data);
+	data->ct_timer = g_timeout_add_seconds(timeout, policy_connect_ct,
+									data);
 }
 
 static struct policy_data *find_data(struct btd_device *dev)
@@ -257,7 +271,7 @@ static void sink_cb(struct btd_service *service, btd_service_state_t old_state,
 			policy_connect(data, controller);
 		else if (btd_service_get_state(controller) !=
 						BTD_SERVICE_STATE_CONNECTED)
-			policy_set_ct_timer(data);
+			policy_set_ct_timer(data, CONTROL_CONNECT_TIMEOUT);
 		break;
 	case BTD_SERVICE_STATE_DISCONNECTING:
 		break;
@@ -270,6 +284,7 @@ static gboolean policy_connect_tg(gpointer user_data)
 	struct btd_service *service;
 
 	data->tg_timer = 0;
+	data->tg_retries++;
 
 	service = btd_device_get_service(data->dev, AVRCP_TARGET_UUID);
 	if (service != NULL)
@@ -278,13 +293,12 @@ static gboolean policy_connect_tg(gpointer user_data)
 	return FALSE;
 }
 
-static void policy_set_tg_timer(struct policy_data *data)
+static void policy_set_tg_timer(struct policy_data *data, int timeout)
 {
 	if (data->tg_timer > 0)
 		g_source_remove(data->tg_timer);
 
-	data->tg_timer = g_timeout_add_seconds(CONTROL_CONNECT_TIMEOUT,
-							policy_connect_tg,
+	data->tg_timer = g_timeout_add_seconds(timeout, policy_connect_tg,
 							data);
 }
 
@@ -372,7 +386,7 @@ static void source_cb(struct btd_service *service,
 			policy_connect(data, target);
 		else if (btd_service_get_state(target) !=
 						BTD_SERVICE_STATE_CONNECTED)
-			policy_set_tg_timer(data);
+			policy_set_tg_timer(data, CONTROL_CONNECT_TIMEOUT);
 		break;
 	case BTD_SERVICE_STATE_DISCONNECTING:
 		break;
@@ -398,6 +412,23 @@ static void controller_cb(struct btd_service *service,
 		}
 		break;
 	case BTD_SERVICE_STATE_DISCONNECTED:
+		if (old_state == BTD_SERVICE_STATE_CONNECTING) {
+			int err = btd_service_get_error(service);
+
+			if (err == -EAGAIN) {
+				if (data->ct_retries < CT_RETRIES)
+					policy_set_ct_timer(data,
+							CT_RETRY_TIMEOUT);
+				else
+					data->ct_retries = 0;
+				break;
+			} else if (data->ct_timer > 0) {
+				g_source_remove(data->ct_timer);
+				data->ct_timer = 0;
+			}
+		} else if (old_state == BTD_SERVICE_STATE_CONNECTED) {
+			data->ct_retries = 0;
+		}
 		break;
 	case BTD_SERVICE_STATE_CONNECTING:
 		break;
@@ -431,6 +462,23 @@ static void target_cb(struct btd_service *service,
 		}
 		break;
 	case BTD_SERVICE_STATE_DISCONNECTED:
+		if (old_state == BTD_SERVICE_STATE_CONNECTING) {
+			int err = btd_service_get_error(service);
+
+			if (err == -EAGAIN) {
+				if (data->tg_retries < TG_RETRIES)
+					policy_set_tg_timer(data,
+							TG_RETRY_TIMEOUT);
+				else
+					data->tg_retries = 0;
+				break;
+			} else if (data->tg_timer > 0) {
+				g_source_remove(data->tg_timer);
+				data->tg_timer = 0;
+			}
+		} else if (old_state == BTD_SERVICE_STATE_CONNECTED) {
+			data->tg_retries = 0;
+		}
 		break;
 	case BTD_SERVICE_STATE_CONNECTING:
 		break;
@@ -447,8 +495,7 @@ static void target_cb(struct btd_service *service,
 
 static void reconnect_reset(struct reconnect_data *reconnect)
 {
-	reconnect->start = 0;
-	reconnect->timeout = 1;
+	reconnect->attempt = 0;
 
 	if (reconnect->timer > 0) {
 		g_source_remove(reconnect->timer);
@@ -620,9 +667,6 @@ static gboolean reconnect_timeout(gpointer data)
 	/* Mark the GSource as invalid */
 	reconnect->timer = 0;
 
-	/* Increase timeout for the next attempt if this * one fails. */
-	reconnect->timeout *= 2;
-
 	err = btd_device_connect_services(reconnect->dev, reconnect->services);
 	if (err < 0) {
 		error("Reconnecting services failed: %s (%d)",
@@ -632,11 +676,24 @@ static gboolean reconnect_timeout(gpointer data)
 	}
 
 	reconnect->active = true;
-
-	if (!reconnect->start)
-		reconnect->start = time(NULL);
+	reconnect->attempt++;
 
 	return FALSE;
+}
+
+static void reconnect_set_timer(struct reconnect_data *reconnect)
+{
+	static int timeout = 0;
+
+	reconnect->attempt++;
+
+	if (reconnect->attempt < reconnect_intervals_len)
+		timeout = reconnect_intervals[reconnect->attempt];
+
+	DBG("%d seconds", timeout);
+
+	reconnect->timer = g_timeout_add_seconds(timeout, reconnect_timeout,
+								reconnect);
 }
 
 static void disconnect_cb(struct btd_device *dev, uint8_t reason)
@@ -655,15 +712,12 @@ static void disconnect_cb(struct btd_device *dev, uint8_t reason)
 	DBG("Device %s identified for auto-reconnection",
 							device_get_path(dev));
 
-	reconnect->timer = g_timeout_add_seconds(reconnect->timeout,
-							reconnect_timeout,
-							reconnect);
+	reconnect_set_timer(reconnect);
 }
 
 static void conn_fail_cb(struct btd_device *dev, uint8_t status)
 {
 	struct reconnect_data *reconnect;
-	time_t duration;
 
 	DBG("status %u", status);
 
@@ -682,17 +736,28 @@ static void conn_fail_cb(struct btd_device *dev, uint8_t status)
 		return;
 	}
 
-	/* Give up if we've tried for too long */
-	duration = time(NULL) - reconnect->start;
-	if (duration + reconnect->timeout >= RECONNECT_GIVE_UP) {
+	/* Reset if ReconnectAttempts was reached */
+	if (reconnect->attempt == reconnect_attempts) {
 		reconnect_reset(reconnect);
 		return;
 	}
 
-	reconnect->timer = g_timeout_add_seconds(reconnect->timeout,
-							reconnect_timeout,
-							reconnect);
+	reconnect_set_timer(reconnect);
 }
+
+static int policy_adapter_probe(struct btd_adapter *adapter)
+{
+	DBG("");
+
+	btd_adapter_restore_powered(adapter);
+
+	return 0;
+}
+
+static struct btd_adapter_driver policy_driver = {
+	.name	= "policy",
+	.probe	= policy_adapter_probe,
+};
 
 static int policy_init(void)
 {
@@ -704,22 +769,52 @@ static int policy_init(void)
 	conf = btd_get_main_conf();
 	if (!conf) {
 		reconnect_uuids = g_strdupv((char **) default_reconnect);
-		goto add_cb;
+		reconnect_attempts = default_attempts;
+		reconnect_intervals_len = sizeof(default_intervals) /
+						sizeof(*reconnect_intervals);
+		reconnect_intervals = g_memdup(default_intervals,
+						reconnect_intervals_len);
+		goto done;
 	}
 
 	reconnect_uuids = g_key_file_get_string_list(conf, "Policy",
 							"ReconnectUUIDs",
 							NULL, &gerr);
 	if (gerr) {
-		g_error_free(gerr);
+		g_clear_error(&gerr);
 		reconnect_uuids = g_strdupv((char **) default_reconnect);
-		goto add_cb;
 	}
-add_cb:
-	if (reconnect_uuids && reconnect_uuids[0]) {
+
+	reconnect_attempts = g_key_file_get_integer(conf, "Policy",
+							"ReconnectAttempts",
+							&gerr);
+	if (gerr) {
+		g_clear_error(&gerr);
+		reconnect_attempts = default_attempts;
+	}
+
+	reconnect_intervals = g_key_file_get_integer_list(conf, "Policy",
+					"ReconnectIntervals",
+					(size_t *) &reconnect_intervals_len,
+					&gerr);
+	if (gerr) {
+		g_clear_error(&gerr);
+		reconnect_intervals_len = sizeof(default_intervals);
+		reconnect_intervals = g_memdup(default_intervals,
+						reconnect_intervals_len);
+	}
+
+	auto_enable = g_key_file_get_boolean(conf, "Policy", "AutoEnable",
+									NULL);
+
+done:
+	if (reconnect_uuids && reconnect_uuids[0] && reconnect_attempts) {
 		btd_add_disconnect_cb(disconnect_cb);
 		btd_add_conn_fail_cb(conn_fail_cb);
 	}
+
+	if (auto_enable)
+		btd_register_adapter_driver(&policy_driver);
 
 	return 0;
 }
@@ -732,11 +827,16 @@ static void policy_exit(void)
 	if (reconnect_uuids)
 		g_strfreev(reconnect_uuids);
 
+	g_free(reconnect_intervals);
+
 	g_slist_free_full(reconnects, reconnect_destroy);
 
 	g_slist_free_full(devices, policy_remove);
 
 	btd_service_remove_state_cb(service_id);
+
+	if (auto_enable)
+		btd_unregister_adapter_driver(&policy_driver);
 }
 
 BLUETOOTH_PLUGIN_DEFINE(policy, VERSION, BLUETOOTH_PLUGIN_PRIORITY_DEFAULT,

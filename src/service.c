@@ -35,9 +35,10 @@
 #include <sys/ioctl.h>
 #include <errno.h>
 
-#include <bluetooth/bluetooth.h>
-
 #include <glib.h>
+
+#include "lib/bluetooth.h"
+#include "lib/sdp.h"
 
 #include "log.h"
 
@@ -183,17 +184,33 @@ int service_accept(struct btd_service *service)
 	char addr[18];
 	int err;
 
+	switch (service->state) {
+	case BTD_SERVICE_STATE_UNAVAILABLE:
+		return -EINVAL;
+	case BTD_SERVICE_STATE_DISCONNECTED:
+		break;
+	case BTD_SERVICE_STATE_CONNECTING:
+	case BTD_SERVICE_STATE_CONNECTED:
+		return -EALREADY;
+	case BTD_SERVICE_STATE_DISCONNECTING:
+		return -EBUSY;
+	}
+
 	if (!service->profile->accept)
-		return 0;
+		goto done;
 
 	err = service->profile->accept(service);
 	if (!err)
-		return 0;
+		goto done;
 
 	ba2str(device_get_address(service->device), addr);
 	error("%s profile accept failed for %s", service->profile->name, addr);
 
 	return err;
+
+done:
+	change_state(service, BTD_SERVICE_STATE_CONNECTING, 0);
+	return 0;
 }
 
 int btd_service_connect(struct btd_service *service)
@@ -335,8 +352,7 @@ bool btd_service_remove_state_cb(unsigned int id)
 
 void btd_service_connecting_complete(struct btd_service *service, int err)
 {
-	if (service->state != BTD_SERVICE_STATE_DISCONNECTED &&
-				service->state != BTD_SERVICE_STATE_CONNECTING)
+	if (service->state != BTD_SERVICE_STATE_CONNECTING)
 		return;
 
 	if (err == 0)

@@ -45,9 +45,9 @@
 #include <sys/socket.h>
 #include <sys/uio.h>
 
-#include <bluetooth/bluetooth.h>
-#include <bluetooth/hci.h>
-#include <bluetooth/hci_lib.h>
+#include "lib/bluetooth.h"
+#include "lib/hci.h"
+#include "lib/hci_lib.h"
 
 #include "hciattach.h"
 
@@ -785,12 +785,12 @@ static int swave(int fd, struct uart_t *u, struct termios *ti)
 	nanosleep(&tm, NULL);
 
 	// now the uart baud rate on the silicon wave module is set and effective.
-	// change our own baud rate as well. Then there is a reset event comming in
+	// change our own baud rate as well. Then there is a reset event coming in
  	// on the *new* baud rate. This is *undocumented*! The packet looks like this:
 	// 04 FF 01 0B (which would make that a confirmation of 0x0B = "Param
 	// subcommand class". So: change to new baud rate, read with timeout, parse
 	// data, error handling. BTW: all param access in Silicon Wave is done this way.
-	// Maybe this code would belong in a seperate file, or at least code reuse...
+	// Maybe this code would belong in a separate file, or at least code reuse...
 
 	return 0;
 }
@@ -1187,7 +1187,7 @@ static int init_uart(char *dev, struct uart_t *u, int send_break, int raw)
 
 	if (tcgetattr(fd, &ti) < 0) {
 		perror("Can't get port settings");
-		return -1;
+		goto fail;
 	}
 
 	cfmakeraw(&ti);
@@ -1200,13 +1200,13 @@ static int init_uart(char *dev, struct uart_t *u, int send_break, int raw)
 
 	if (tcsetattr(fd, TCSANOW, &ti) < 0) {
 		perror("Can't set port settings");
-		return -1;
+		goto fail;
 	}
 
 	/* Set initial baudrate */
 	if (set_speed(fd, &ti, u->init_speed) < 0) {
 		perror("Can't set initial baud rate");
-		return -1;
+		goto fail;
 	}
 
 	tcflush(fd, TCIOFLUSH);
@@ -1217,7 +1217,7 @@ static int init_uart(char *dev, struct uart_t *u, int send_break, int raw)
 	}
 
 	if (u->init && u->init(fd, u, &ti) < 0)
-		return -1;
+		goto fail;
 
 	// [GGSM][sc47.yun] Fixed kernel panic issue at HCI tty command. So Delay initial UART setup.
 	usleep(500000);
@@ -1228,30 +1228,34 @@ static int init_uart(char *dev, struct uart_t *u, int send_break, int raw)
 	/* Set actual baudrate */
 	if (set_speed(fd, &ti, u->speed) < 0) {
 		perror("Can't set baud rate");
-		return -1;
+		goto fail;
 	}
 
 	/* Set TTY to N_HCI line discipline */
 	i = N_HCI;
 	if (ioctl(fd, TIOCSETD, &i) < 0) {
 		perror("Can't set line discipline");
-		return -1;
+		goto fail;
 	}
 
 	if (flags && ioctl(fd, HCIUARTSETFLAGS, flags) < 0) {
 		perror("Can't set UART flags");
-		return -1;
+		goto fail;
 	}
 
 	if (ioctl(fd, HCIUARTSETPROTO, u->proto) < 0) {
 		perror("Can't set device");
-		return -1;
+		goto fail;
 	}
 
 	if (u->post && u->post(fd, u, &ti) < 0)
-		return -1;
+		goto fail;
 
 	return fd;
+
+fail:
+	close(fd);
+	return -1;
 }
 
 static void usage(void)
@@ -1334,6 +1338,12 @@ int main(int argc, char *argv[])
 			dev[0] = 0;
 			if (!strchr(opt, '/'))
 				strcpy(dev, "/dev/");
+
+			if (strlen(opt) > PATH_MAX - (strlen(dev) + 1)) {
+				fprintf(stderr, "Invalid serial device\n");
+				exit(1);
+			}
+
 			strcat(dev, opt);
 			break;
 

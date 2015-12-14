@@ -15,6 +15,8 @@ pathmap_INCL += glib:external/bluetooth/glib \
 BLUEZ_COMMON_CFLAGS := -DVERSION=\"$(BLUEZ_VERSION)\" \
 			-DANDROID_VERSION=$(ANDROID_VERSION) \
 			-DANDROID_STORAGEDIR=\"/data/misc/bluetooth\" \
+			-DHAVE_LINUX_IF_ALG_H \
+			-DHAVE_LINUX_TYPES_H \
 
 # Enable warnings enabled in autotools build
 BLUEZ_COMMON_CFLAGS += -Wall -Wextra \
@@ -154,10 +156,15 @@ LOCAL_SHARED_LIBRARIES := \
 LOCAL_CFLAGS := $(BLUEZ_COMMON_CFLAGS)
 
 LOCAL_MODULE := bluetooth.default
-LOCAL_MODULE_PATH := $(TARGET_OUT_SHARED_LIBRARIES)/hw
 LOCAL_MODULE_TAGS := optional
 LOCAL_MODULE_CLASS := SHARED_LIBRARIES
 LOCAL_REQUIRED_MODULES := bluetoothd bluetoothd-snoop init.bluetooth.rc
+
+ifeq ($(ANDROID_GE_5_0_0), 1)
+LOCAL_MODULE_RELATIVE_PATH := hw
+else
+LOCAL_MODULE_PATH := $(TARGET_OUT_SHARED_LIBRARIES)/hw
+endif
 
 include $(BUILD_SHARED_LIBRARY)
 
@@ -249,6 +256,41 @@ LOCAL_MODULE := mcaptest
 include $(BUILD_EXECUTABLE)
 
 #
+# bneptest
+#
+
+include $(CLEAR_VARS)
+
+LOCAL_SRC_FILES := \
+	bluez/src/log.c \
+	bluez/btio/btio.c \
+	bluez/lib/bluetooth.c \
+	bluez/lib/hci.c \
+	bluez/profiles/network/bnep.c \
+	bluez/tools/bneptest.c \
+
+LOCAL_C_INCLUDES := \
+	$(call include-path-for, glib) \
+	$(call include-path-for, glib)/glib \
+
+LOCAL_C_INCLUDES += \
+	$(LOCAL_PATH)/bluez \
+
+LOCAL_CFLAGS := $(BLUEZ_COMMON_CFLAGS)
+
+LOCAL_SHARED_LIBRARIES := \
+	libglib \
+
+LOCAL_STATIC_LIBRARIES := \
+	bluetooth-headers \
+
+LOCAL_MODULE_PATH := $(TARGET_OUT_OPTIONAL_EXECUTABLES)
+LOCAL_MODULE_TAGS := debug
+LOCAL_MODULE := bneptest
+
+include $(BUILD_EXECUTABLE)
+
+#
 # avdtptest
 #
 
@@ -261,6 +303,8 @@ LOCAL_SRC_FILES := \
 	bluez/btio/btio.c \
 	bluez/lib/bluetooth.c \
 	bluez/lib/hci.c \
+	bluez/src/shared/util.c \
+	bluez/src/shared/queue.c \
 
 LOCAL_C_INCLUDES += \
 	$(LOCAL_PATH)/bluez \
@@ -289,7 +333,6 @@ include $(CLEAR_VARS)
 
 LOCAL_SRC_FILES := \
 	bluez/monitor/main.c \
-	bluez/monitor/mainloop.c \
 	bluez/monitor/display.c \
 	bluez/monitor/hcidump.c \
 	bluez/monitor/control.c \
@@ -297,6 +340,7 @@ LOCAL_SRC_FILES := \
 	bluez/monitor/l2cap.c \
 	bluez/monitor/avctp.c \
 	bluez/monitor/rfcomm.c \
+	bluez/monitor/bnep.c \
 	bluez/monitor/uuid.c \
 	bluez/monitor/sdp.c \
 	bluez/monitor/vendor.c \
@@ -307,10 +351,13 @@ LOCAL_SRC_FILES := \
 	bluez/monitor/keys.c \
 	bluez/monitor/ellisys.c \
 	bluez/monitor/analyze.c \
+	bluez/monitor/intel.c \
+	bluez/monitor/broadcom.c \
 	bluez/src/shared/util.c \
 	bluez/src/shared/queue.c \
 	bluez/src/shared/crypto.c \
 	bluez/src/shared/btsnoop.c \
+	bluez/src/shared/mainloop.c \
 	bluez/lib/hci.c \
 	bluez/lib/bluetooth.c \
 	bluez/android/log.c \
@@ -339,8 +386,9 @@ include $(CLEAR_VARS)
 
 LOCAL_SRC_FILES := \
 	bluez/tools/btproxy.c \
-	bluez/monitor/mainloop.c \
+	bluez/src/shared/mainloop.c \
 	bluez/src/shared/util.c \
+	bluez/src/shared/ecc.c \
 
 LOCAL_C_INCLUDES := \
 	$(LOCAL_PATH)/bluez \
@@ -379,9 +427,14 @@ LOCAL_SHARED_LIBRARIES := \
 LOCAL_CFLAGS := $(BLUEZ_COMMON_CFLAGS) -Wno-declaration-after-statement
 LOCAL_LDFLAGS := -ldl
 
-LOCAL_MODULE_PATH := $(TARGET_OUT_SHARED_LIBRARIES)/hw
 LOCAL_MODULE_TAGS := optional
 LOCAL_MODULE := audio.a2dp.default
+
+ifeq ($(ANDROID_GE_5_0_0), 1)
+LOCAL_MODULE_RELATIVE_PATH := hw
+else
+LOCAL_MODULE_PATH := $(TARGET_OUT_SHARED_LIBRARIES)/hw
+endif
 
 include $(BUILD_SHARED_LIBRARY)
 
@@ -405,9 +458,14 @@ LOCAL_SHARED_LIBRARIES := \
 
 LOCAL_CFLAGS := $(BLUEZ_COMMON_CFLAGS) -Wno-declaration-after-statement
 
-LOCAL_MODULE_PATH := $(TARGET_OUT_SHARED_LIBRARIES)/hw
 LOCAL_MODULE_TAGS := optional
 LOCAL_MODULE := audio.sco.default
+
+ifeq ($(ANDROID_GE_5_0_0), 1)
+LOCAL_MODULE_RELATIVE_PATH := hw
+else
+LOCAL_MODULE_PATH := $(TARGET_OUT_SHARED_LIBRARIES)/hw
+endif
 
 include $(BUILD_SHARED_LIBRARY)
 
@@ -446,7 +504,7 @@ include $(CLEAR_VARS)
 
 LOCAL_SRC_FILES := \
 	bluez/android/bluetoothd-snoop.c \
-	bluez/monitor/mainloop.c \
+	bluez/src/shared/mainloop.c \
 	bluez/src/shared/btsnoop.c \
 	bluez/android/log.c \
 
@@ -486,17 +544,20 @@ include $(CLEAR_VARS)
 LOCAL_SRC_FILES := \
 	bluez/tools/btmgmt.c \
 	bluez/lib/bluetooth.c \
+	bluez/lib/hci.c \
 	bluez/lib/sdp.c \
-	bluez/monitor/mainloop.c \
+	bluez/src/shared/mainloop.c \
 	bluez/src/shared/io-mainloop.c \
 	bluez/src/shared/mgmt.c \
 	bluez/src/shared/queue.c \
 	bluez/src/shared/util.c \
 	bluez/src/shared/gap.c \
 	bluez/src/uuid-helper.c \
+	bluez/client/display.c \
 
 LOCAL_C_INCLUDES := \
 	$(LOCAL_PATH)/bluez \
+	$(LOCAL_PATH)/bluez/android/compat \
 
 LOCAL_CFLAGS := $(BLUEZ_COMMON_CFLAGS)
 
@@ -580,6 +641,9 @@ LOCAL_SRC_FILES := \
 	bluez/lib/bluetooth.c \
 	bluez/lib/hci.c \
 
+LOCAL_C_INCLUDES := \
+	$(LOCAL_PATH)/bluez \
+
 LOCAL_CFLAGS := $(BLUEZ_COMMON_CFLAGS)
 
 LOCAL_STATIC_LIBRARIES := \
@@ -603,6 +667,9 @@ LOCAL_SRC_FILES := \
 	bluez/tools/avtest.c \
 	bluez/lib/bluetooth.c \
 	bluez/lib/hci.c \
+
+LOCAL_C_INCLUDES := \
+	$(LOCAL_PATH)/bluez \
 
 LOCAL_CFLAGS := $(BLUEZ_COMMON_CFLAGS)
 
@@ -634,6 +701,9 @@ LOCAL_SRC_FILES := \
 	bluez/tools/hciattach_bcm43xx.c \
 	bluez/lib/bluetooth.c \
 	bluez/lib/hci.c \
+
+LOCAL_C_INCLUDES := \
+	$(LOCAL_PATH)/bluez \
 
 LOCAL_CFLAGS := $(BLUEZ_COMMON_CFLAGS)
 

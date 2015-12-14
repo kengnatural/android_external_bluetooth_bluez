@@ -118,10 +118,19 @@ void add_remote_device(const bt_bdaddr_t *addr)
 
 	/* Realloc space if needed */
 	if (remote_devices_cnt >= remote_devices_capacity) {
+		bt_bdaddr_t *tmp;
+
 		remote_devices_capacity *= 2;
+		/*
+		 * Save reference to previously allocated memory block so that
+		 * it can be freed in case realloc fails.
+		 */
+		tmp = remote_devices;
+
 		remote_devices = realloc(remote_devices, sizeof(bt_bdaddr_t) *
 						remote_devices_capacity);
 		if (remote_devices == NULL) {
+			free(tmp);
 			remote_devices_capacity = 0;
 			remote_devices_cnt = 0;
 			return;
@@ -247,8 +256,8 @@ static void pin_request_cb(bt_bdaddr_t *remote_bd_addr, bt_bdname_t *bd_name,
 	bt_bdaddr_t2str(remote_bd_addr, last_remote_addr);
 	pin_request_addr = *remote_bd_addr;
 
-    haltest_info("%s: remote_bd_addr=%s bd_name=%s cod=%06x secure=%02x\n", __func__,
-                 last_remote_addr, bd_name->name, cod, secure);
+	haltest_info("%s: remote_bd_addr=%s bd_name=%s cod=%06x secure=%02x\n", __func__,
+					last_remote_addr, bd_name->name, cod, secure);
 	terminal_prompt_for("Enter pin: ", pin_request_answer);
 }
 

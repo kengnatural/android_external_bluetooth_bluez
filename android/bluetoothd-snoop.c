@@ -36,7 +36,7 @@
 #include "lib/hci.h"
 #include "lib/mgmt.h"
 
-#include "monitor/mainloop.h"
+#include "src/shared/mainloop.h"
 #include "src/shared/btsnoop.h"
 #include "src/log.h"
 
@@ -72,6 +72,9 @@ static uint32_t get_flags_from_opcode(uint16_t opcode)
 		return 0x01;
 	case BTSNOOP_OPCODE_SCO_TX_PKT:
 	case BTSNOOP_OPCODE_SCO_RX_PKT:
+		break;
+	case BTSNOOP_OPCODE_OPEN_INDEX:
+	case BTSNOOP_OPCODE_CLOSE_INDEX:
 		break;
 	}
 

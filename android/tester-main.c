@@ -121,6 +121,7 @@ static struct {
 	DBG_CB(CB_GATTS_REQUEST_WRITE),
 	DBG_CB(CB_GATTS_REQUEST_EXEC_WRITE),
 	DBG_CB(CB_GATTS_RESPONSE_CONFIRMATION),
+	DBG_CB(CB_GATTS_INDICATION_SEND),
 
 	/* Map client */
 	DBG_CB(CB_MAP_CLIENT_REMOTE_MAS_INSTANCES),
@@ -134,6 +135,7 @@ static struct {
 	DBG_CB(CB_EMU_VALUE_NOTIFICATION),
 	DBG_CB(CB_EMU_READ_RESPONSE),
 	DBG_CB(CB_EMU_WRITE_RESPONSE),
+	DBG_CB(CB_EMU_ATT_ERROR),
 };
 
 static gboolean check_callbacks_called(gpointer user_data)
@@ -327,7 +329,7 @@ static void mgmt_debug(const char *str, void *user_data)
 static bool hciemu_post_encr_hook(const void *data, uint16_t len,
 							void *user_data)
 {
-	struct step *step = g_new0(struct step, 1);
+	struct step *step;
 
 	/*
 	 * Expected data: status (1 octet) + conn. handle (2 octets) +
@@ -335,6 +337,8 @@ static bool hciemu_post_encr_hook(const void *data, uint16_t len,
 	 */
 	if (len < 4)
 		return true;
+
+	step = g_new0(struct step, 1);
 
 	step->callback = ((uint8_t *)data)[3] ? CB_EMU_ENCRYPTION_ENABLED :
 						CB_EMU_ENCRYPTION_DISABLED;
@@ -1033,6 +1037,13 @@ static bool match_data(struct step *step)
 				step->callback_result.mas_instances,
 				step->callback_result.num_mas_instances)) {
 		tester_debug("Mas instances don't match");
+		return false;
+	}
+
+	if (exp->callback_result.error != step->callback_result.error) {
+		tester_debug("Err mismatch: %d vs %d",
+				exp->callback_result.error,
+				step->callback_result.error);
 		return false;
 	}
 
@@ -1992,6 +2003,18 @@ static void gatts_request_write_cb(int conn_id, int trans_id, bt_bdaddr_t *bda,
 	schedule_callback_verification(step);
 }
 
+static void gatts_indication_send_cb(int conn_id, int status)
+{
+	struct step *step = g_new0(struct step, 1);
+
+	step->callback = CB_GATTS_INDICATION_SEND;
+
+	step->callback_result.conn_id = conn_id;
+	step->callback_result.status = status;
+
+	schedule_callback_verification(step);
+}
+
 static const btgatt_server_callbacks_t btgatt_server_callbacks = {
 	.register_server_cb = gatts_register_server_cb,
 	.connection_cb = gatts_connection_cb,
@@ -2005,7 +2028,9 @@ static const btgatt_server_callbacks_t btgatt_server_callbacks = {
 	.request_read_cb = gatts_request_read_cb,
 	.request_write_cb = gatts_request_write_cb,
 	.request_exec_write_cb = NULL,
-	.response_confirmation_cb = NULL
+	.response_confirmation_cb = NULL,
+	.indication_sent_cb = gatts_indication_send_cb,
+	.congestion_cb = NULL,
 };
 
 static const btgatt_callbacks_t btgatt_callbacks = {
@@ -2696,8 +2721,17 @@ void emu_setup_powered_remote_action(void)
 	bthost_set_cmd_complete_cb(bthost, emu_connectable_complete, data);
 
 	if ((data->hciemu_type == HCIEMU_TYPE_LE) ||
-				(data->hciemu_type == HCIEMU_TYPE_BREDRLE))
-		bthost_set_adv_enable(bthost, 0x01, 0x02);
+				(data->hciemu_type == HCIEMU_TYPE_BREDRLE)) {
+		uint8_t adv[4];
+
+		adv[0] = 0x02;	/* Field length */
+		adv[1] = 0x01;	/* Flags */
+		adv[2] = 0x02;	/* Flags value */
+		adv[3] = 0x00;	/* Field terminator */
+
+		bthost_set_adv_data(bthost, adv, sizeof(adv));
+		bthost_set_adv_enable(bthost, 0x01);
+	}
 
 	if (data->hciemu_type != HCIEMU_TYPE_LE)
 		bthost_write_scan_enable(bthost, 0x03);
@@ -2929,12 +2963,14 @@ void emu_add_rfcomm_server_action(void)
 	struct step *current_data_step = queue_peek_head(data->steps);
 	struct bt_action_data *rfcomm_data = current_data_step->set_data;
 	struct bthost *bthost;
-	struct step *step = g_new0(struct step, 1);
+	struct step *step;
 
 	if (!rfcomm_data) {
 		tester_warn("Invalid l2cap_data params");
 		return;
 	}
+
+	step = g_new0(struct step, 1);
 
 	bthost = hciemu_client_get_host(data->hciemu);
 
@@ -2978,7 +3014,7 @@ void bluetooth_disable_action(void)
 void bt_set_property_action(void)
 {
 	struct test_data *data = tester_get_data();
-	struct step *step = g_new0(struct step, 1);
+	struct step *step;
 	struct step *current_data_step = queue_peek_head(data->steps);
 	bt_property_t *prop;
 
@@ -2987,6 +3023,8 @@ void bt_set_property_action(void)
 		tester_test_failed();
 		return;
 	}
+
+	step = g_new0(struct step, 1);
 
 	prop = (bt_property_t *)current_data_step->set_data;
 
@@ -2998,7 +3036,7 @@ void bt_set_property_action(void)
 void bt_get_property_action(void)
 {
 	struct test_data *data = tester_get_data();
-	struct step *step = g_new0(struct step, 1);
+	struct step *step;
 	struct step *current_data_step = queue_peek_head(data->steps);
 	bt_property_t *prop;
 
@@ -3007,6 +3045,8 @@ void bt_get_property_action(void)
 		tester_test_failed();
 		return;
 	}
+
+	step = g_new0(struct step, 1);
 
 	prop = (bt_property_t *)current_data_step->set_data;
 
@@ -3040,13 +3080,15 @@ void bt_get_device_props_action(void)
 {
 	struct test_data *data = tester_get_data();
 	struct step *current_data_step = queue_peek_head(data->steps);
-	struct step *step = g_new0(struct step, 1);
+	struct step *step;
 
 	if (!current_data_step->set_data) {
 		tester_debug("bdaddr not defined");
 		tester_test_failed();
 		return;
 	}
+
+	step = g_new0(struct step, 1);
 
 	step->action_status =
 		data->if_bluetooth->get_remote_device_properties(
@@ -3060,13 +3102,15 @@ void bt_get_device_prop_action(void)
 	struct test_data *data = tester_get_data();
 	struct step *current_data_step = queue_peek_head(data->steps);
 	struct bt_action_data *action_data = current_data_step->set_data;
-	struct step *step = g_new0(struct step, 1);
+	struct step *step;
 
 	if (!action_data) {
 		tester_warn("No arguments for 'get remote device prop' req.");
 		tester_test_failed();
 		return;
 	}
+
+	step = g_new0(struct step, 1);
 
 	step->action_status = data->if_bluetooth->get_remote_device_property(
 							action_data->addr,
@@ -3080,13 +3124,15 @@ void bt_set_device_prop_action(void)
 	struct test_data *data = tester_get_data();
 	struct step *current_data_step = queue_peek_head(data->steps);
 	struct bt_action_data *action_data = current_data_step->set_data;
-	struct step *step = g_new0(struct step, 1);
+	struct step *step;
 
 	if (!action_data) {
 		tester_warn("No arguments for 'set remote device prop' req.");
 		tester_test_failed();
 		return;
 	}
+
+	step = g_new0(struct step, 1);
 
 	step->action_status = data->if_bluetooth->set_remote_device_property(
 							action_data->addr,
@@ -3100,13 +3146,15 @@ void bt_create_bond_action(void)
 	struct test_data *data = tester_get_data();
 	struct step *current_data_step = queue_peek_head(data->steps);
 	struct bt_action_data *action_data = current_data_step->set_data;
-	struct step *step = g_new0(struct step, 1);
+	struct step *step;
 
 	if (!action_data || !action_data->addr) {
 		tester_warn("Bad arguments for 'create bond' req.");
 		tester_test_failed();
 		return;
 	}
+
+	step = g_new0(struct step, 1);
 
 	step->action_status =
 			data->if_bluetooth->create_bond(action_data->addr,
@@ -3122,13 +3170,15 @@ void bt_pin_reply_accept_action(void)
 	struct test_data *data = tester_get_data();
 	struct step *current_data_step = queue_peek_head(data->steps);
 	struct bt_action_data *action_data = current_data_step->set_data;
-	struct step *step = g_new0(struct step, 1);
+	struct step *step;
 
 	if (!action_data || !action_data->addr || !action_data->pin) {
 		tester_warn("Bad arguments for 'pin reply' req.");
 		tester_test_failed();
 		return;
 	}
+
+	step = g_new0(struct step, 1);
 
 	step->action_status = data->if_bluetooth->pin_reply(action_data->addr,
 							TRUE,

@@ -817,7 +817,7 @@ static void hog_conn_cb(const bdaddr_t *addr, int err, void *attrib)
 
 	if (!dev->hog) {
 		/* TODO: Get device details and primary */
-		dev->hog = bt_hog_new("bluez-input-device", dev->vendor,
+		dev->hog = bt_hog_new_default("bluez-input-device", dev->vendor,
 					dev->product, dev->version, NULL);
 		if (!dev->hog) {
 			error("HoG: unable to create session");
@@ -891,7 +891,7 @@ static void bt_hid_connect(const void *buf, uint16_t len)
 	ba2str(&dev->dst, addr);
 	DBG("connecting to %s", addr);
 
-	if (bt_is_device_le(&dst)) {
+	if (bt_device_last_seen_bearer(&dev->dst) != BDADDR_BREDR) {
 		if (!hog_connect(dev)) {
 			status = HAL_STATUS_FAILED;
 			hid_device_remove(dev);
@@ -1495,7 +1495,7 @@ static void connect_cb(GIOChannel *chan, GError *err, gpointer user_data)
 	}
 }
 
-static void hid_unpaired_cb(const bdaddr_t *addr, uint8_t type)
+static void hid_unpaired_cb(const bdaddr_t *addr)
 {
 	GSList *l;
 	struct hid_device *dev;

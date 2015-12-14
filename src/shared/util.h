@@ -93,14 +93,12 @@ void util_hexdump(const char dir, const unsigned char *buf, size_t len,
 
 unsigned char util_get_dt(const char *parent, const char *name);
 
-static inline void bswap_128(const void *src, void *dst)
-{
-	const uint8_t *s = src;
-	uint8_t *d = dst;
-	int i;
+uint8_t util_get_uid(unsigned int *bitmap, uint8_t max);
+void util_clear_uid(unsigned int *bitmap, uint8_t id);
 
-	for (i = 0; i < 16; i++)
-		d[15 - i] = s[i];
+static inline uint8_t get_u8(const void *ptr)
+{
+	return *((uint8_t *) ptr);
 }
 
 static inline uint16_t get_le16(const void *ptr)

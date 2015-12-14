@@ -43,11 +43,12 @@
 
 #include <glib.h>
 
+#include "lib/bluetooth.h"
+#include "lib/sdp.h"
+
 #include "src/log.h"
 #include "src/sdpd.h"
 #include "src/shared/util.h"
-
-#include "lib/bluetooth.h"
 
 #include "ipc-common.h"
 #include "ipc.h"
@@ -260,7 +261,7 @@ static void service_register(const void *buf, uint16_t len)
 failed:
     if(status==HAL_STATUS_FAILED)
         error("Service ID=%u register failed", m->service_id);
-    
+
 	ipc_send_rsp(hal_ipc, HAL_SERVICE_ID_CORE, HAL_OP_REGISTER_MODULE,
 								status);
 }

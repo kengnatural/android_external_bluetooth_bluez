@@ -31,20 +31,21 @@
 #include <stdbool.h>
 #include <errno.h>
 
-#include <bluetooth/bluetooth.h>
-#include <bluetooth/sdp.h>
-
 #include <glib.h>
 #include <dbus/dbus.h>
-#include <gdbus/gdbus.h>
+
+#include "lib/bluetooth.h"
+#include "lib/sdp.h"
+
+#include "gdbus/gdbus.h"
 
 #include "src/log.h"
-
 #include "src/adapter.h"
 #include "src/device.h"
 #include "src/service.h"
 #include "src/error.h"
 #include "src/dbus-common.h"
+#include "src/shared/queue.h"
 
 #include "avdtp.h"
 #include "media.h"
@@ -226,6 +227,8 @@ static void discovery_complete(struct avdtp *session, GSList *seps, struct avdtp
 	struct source *source = user_data;
 	int id, perr;
 
+	source->connect_id = 0;
+
 	if (err) {
 		avdtp_unref(source->session);
 		source->session = NULL;
@@ -272,7 +275,9 @@ gboolean source_setup_stream(struct btd_service *service,
 	if (!source->session)
 		return FALSE;
 
-	if (avdtp_discover(source->session, discovery_complete, source) < 0)
+	source->connect_id = a2dp_discover(source->session, discovery_complete,
+								source);
+	if (source->connect_id == 0)
 		return FALSE;
 
 	return TRUE;
@@ -283,7 +288,7 @@ int source_connect(struct btd_service *service)
 	struct source *source = btd_service_get_user_data(service);
 
 	if (!source->session)
-		source->session = avdtp_get(btd_service_get_device(service));
+		source->session = a2dp_avdtp_get(btd_service_get_device(service));
 
 	if (!source->session) {
 		DBG("Unable to get a session");
@@ -397,7 +402,7 @@ int source_disconnect(struct btd_service *service)
 	if (source->connect_id > 0) {
 		a2dp_cancel(source->connect_id);
 		source->connect_id = 0;
-		btd_service_connecting_complete(source->service, -ECANCELED);
+		btd_service_disconnecting_complete(source->service, 0);
 
 		avdtp_unref(source->session);
 		source->session = NULL;

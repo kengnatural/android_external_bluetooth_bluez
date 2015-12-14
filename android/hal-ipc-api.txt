@@ -456,7 +456,7 @@ Commands and responses:
 		Command parameters: Socket type (1 octet)
 		                    Service name (256 octets)
 		                    Service UUID (16 octets)
-		                    Channel (2 octets)
+		                    Channel (4 octets)
 		                    Socket flags (1 octet)
 		Response parameters: File descriptor (inline)
 
@@ -474,7 +474,7 @@ Commands and responses:
 		Command parameters: Remote address (6 octets)
 		                    Socket type (1 octet)
 		                    Service UUID (16 octets)
-		                    Channel (2 octets)
+		                    Channel (4 octets)
 		                    Socket flags (1 octet)
 		Response parameters: File descriptor (inline)
 
@@ -1068,6 +1068,14 @@ Notifications:
 
 		Notification parameters: Remote address (6 octets)
 
+	Opcode 0x91 - WBS Command notification
+
+		Notification parameters: WBS types (1 octet)
+		                         Remote address (6 octets)
+
+		Valid WBS types: 0x00 = None
+		                 0x01 = No
+		                 0x02 = Yes
 
 Bluetooth Advanced Audio HAL (ID 6)
 Bluetooth Advanced Audio Sink HAL (ID 13)
@@ -2329,6 +2337,11 @@ Notifications:
 		Notification parameters: Connection ID (4 octets)
 		                         Congested (1 octet)
 
+	Opcode 0xb0 - Server MTU Changed notification
+
+		Notification parameters: Connection ID (4 octets)
+		                         MTU (4 octets)
+
 
 Bluetooth Handsfree Client HAL (ID 10)
 ======================================
@@ -2473,8 +2486,9 @@ Notifications:
 
 		Valid State values: 0x00 = Disconnected
 		                    0x01 = Connecting
-		                    0x02 = SLC Connected
-		                    0x03 = Disconnecting
+		                    0x02 = Connected
+		                    0x03 = SLC Connected
+		                    0x04 = Disconnecting
 
 		Peer Features is a bitmask of the supported features. Currently
 		available bits:
